@@ -1,0 +1,100 @@
+name: Windows packages
+run-name: Windows package ${{ inputs.request-id || github.sha }}
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+    inputs:
+      openconnect-version:
+        description: OpenConnect tag; leave empty to use contrib/openconnect-version.txt
+        required: false
+        type: string
+      request-id:
+        description: Identifier used by build.ps1
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}-${{ inputs.request-id || github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      OC_TAG: ${{ inputs.openconnect-version }}
+      BUILD_JOBS: '4'
+      OCG_PACKAGES_READY: '1'
+      CCACHE_DIR: ${{ github.workspace }}/build-cache/ccache
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read package list
+        id: packages
+        shell: pwsh
+        run: |
+          $packages = (Get-Content contrib/windows-packages.txt) -join ' '
+          "install=$packages" >> $env:GITHUB_OUTPUT
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: ${{ steps.packages.outputs.install }}
+      - name: Identify dependency environment
+        id: environment
+        run: |
+          echo "key=$(bash contrib/windows-cache-key.sh)" >> "$GITHUB_OUTPUT"
+          echo "objdump=$(cygpath -m /mingw64/bin/objdump.exe)" >> "$GITHUB_OUTPUT"
+      - name: Restore OpenConnect packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: external
+          key: windows-core-v1-${{ steps.environment.outputs.key }}
+          restore-keys: windows-core-v1-
+      - name: Restore compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build-cache/ccache
+          key: windows-compiler-v1-${{ steps.environment.outputs.key }}-${{ github.sha }}
+          restore-keys: |
+            windows-compiler-v1-${{ steps.environment.outputs.key }}-
+            windows-compiler-v1-
+      - name: Build installer and portable ZIP
+        run: bash contrib/package-windows.sh
+      - name: Validate packages
+        shell: pwsh
+        run: ./contrib/Test-WindowsPackage.ps1 -Directory build-output/windows -Objdump '${{ steps.environment.outputs.objdump }}'
+      - name: Upload packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-package
+          path: |
+            build-output/windows/*.exe
+            build-output/windows/*.zip
+            build-output/windows/*.sha512
+            build-output/windows/build-info.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-build-logs
+          path: |
+            build-output/logs
+            build-MINGW64/openconnect-gui/_CPack_Packages/**/NSISOutput.log
+          if-no-files-found: ignore
+          retention-days: 7

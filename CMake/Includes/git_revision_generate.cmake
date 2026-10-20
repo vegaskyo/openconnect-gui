@@ -4,7 +4,7 @@
 
 if(IS_DIRECTORY ${GIT_ROOT_DIR}/.git)
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --tags --dirty
+        COMMAND ${GIT_EXECUTABLE} describe --tags --match "v[0-9]*" --dirty
         WORKING_DIRECTORY ${GIT_ROOT_DIR}
         RESULT_VARIABLE res_var
         OUTPUT_VARIABLE GIT_COM_ID

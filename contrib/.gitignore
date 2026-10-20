@@ -1,4 +1,6 @@
 build-*MINGW64/
 build-*MINGW32/
 /*.txt
+!/openconnect-version.txt
+!/windows-packages.txt
 /*.sha512

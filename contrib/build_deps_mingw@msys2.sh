@@ -41,7 +41,7 @@ echo "Starting under $MSYSTEM build environment ($ROOT_DIR)..."
 if [ "$1" == "--head" ]; then
     export OC_TAG=master
 else
-    export OC_TAG=v9.21
+    export OC_TAG="${OC_TAG:-$(tr -d '\r\n' < "${ROOT_DIR}/contrib/openconnect-version.txt")}"
 fi
 
 echo "OpenConnect: $OC_TAG"
@@ -67,6 +67,7 @@ echo "======================================================================="
 
 set -e
 
+if [ "${OCG_PACKAGES_READY:-0}" != 1 ]; then
 pacman --needed --noconfirm -S \
     git \
     unzip \
@@ -89,6 +90,7 @@ pacman --needed --noconfirm -S \
     mingw-w64-${BUILD_ARCH}-lz4 \
     mingw-w64-${BUILD_ARCH}-nsis \
     mingw-w64-${BUILD_ARCH}-libproxy
+fi
 
 set +e
 
@@ -96,14 +98,15 @@ set +e
 cd "${BUILD_DIR}"
 
 #CORES=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu || echo "$NUMBER_OF_PROCESSORS")
-CORES=$(getconf _NPROCESSORS_ONLN)
+CORES=${BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN)}
 
 if [ "x$BUILD_STOKEN" = "xno" ]; then
     echo "======================================================================="
     echo " Installing stoken..."
     echo "======================================================================="
-    pacman --needed --noconfirm -S \
-        mingw-w64-${BUILD_ARCH}-stoken
+    if [ "${OCG_PACKAGES_READY:-0}" != 1 ]; then
+        pacman --needed --noconfirm -S mingw-w64-${BUILD_ARCH}-stoken
+    fi
 else
     echo "======================================================================="
     echo " Building stoken..."
@@ -133,14 +136,19 @@ fi
 echo "======================================================================="
 echo " Building openconnect..."
 echo "======================================================================="
-[ -d openconnect ] || git clone -b ${OC_TAG} ${OC_URL}
+[ -d openconnect ] || git clone --depth 1 -b "${OC_TAG}" "${OC_URL}"
 
 set -e
 cd openconnect
-set +e
 
+if [ "${OC_TAG}" = master ]; then
+    git fetch --depth 1 origin master
+    git reset --hard FETCH_HEAD
+else
+    git fetch --depth 1 origin "refs/tags/${OC_TAG}:refs/tags/${OC_TAG}"
+    git reset --hard "${OC_TAG}"
+fi
 git clean -fdx
-git reset --hard ${OC_TAG}
 
 set -e
 echo "hash:"
