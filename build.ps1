@@ -7,7 +7,8 @@ param(
     [long]$RunId,
     [ValidateRange(1,64)][int]$Jobs = 4,
     [string]$Msys2Root = 'C:\msys64',
-    [switch]$RebuildCore
+    [switch]$RebuildCore,
+    [switch]$UseInstalledToolsOnly
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -18,7 +19,7 @@ if ($Local) {
     if (-not (Test-Path -LiteralPath $bash)) {
         throw 'MSYS2 was not found. Run .\build.ps1 without -Local to build on GitHub without installing a toolchain.'
     }
-    $names = @('MSYSTEM','CHERE_INVOKING','OCG_SOURCE_DIR','OC_TAG','BUILD_JOBS','REBUILD_CORE')
+    $names = @('MSYSTEM','CHERE_INVOKING','OCG_SOURCE_DIR','OC_TAG','BUILD_JOBS','REBUILD_CORE','OCG_PACKAGES_READY')
     $savedEnvironment = @{}
     foreach ($name in $names) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
     try {
@@ -28,6 +29,7 @@ if ($Local) {
         $env:OC_TAG = $OpenConnectVersion
         $env:BUILD_JOBS = "$Jobs"
         $env:REBUILD_CORE = if ($RebuildCore) { '1' } else { '0' }
+        $env:OCG_PACKAGES_READY = if ($UseInstalledToolsOnly) { '1' } else { $null }
         & $bash -lc 'cd "$(cygpath -u "$OCG_SOURCE_DIR")" && bash contrib/package-windows.sh'
         if ($LASTEXITCODE -ne 0) { throw 'Local Windows build failed; see build-output/logs.' }
         & (Join-Path $root 'contrib\Test-WindowsPackage.ps1') -Directory (Join-Path $root 'build-output\windows') -Objdump (Join-Path $Msys2Root 'mingw64\bin\objdump.exe')
@@ -112,6 +114,33 @@ if (-not $RunId) {
 Write-Host "Build run: https://github.com/$Repository/actions/runs/$RunId"
 $runState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
 if ($runState.status -eq 'completed') {
+    # A billing-locked account cannot start a runner. Reuse a complete local SDK
+    # when it is already present, without installing missing packages implicitly.
+    $blockedByBilling = $false
+    if ($runState.conclusion -eq 'failure') {
+        $jobsState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId/jobs") | ConvertFrom-Json
+        foreach ($job in $jobsState.jobs) {
+            if (@($job.steps).Count -ne 0) { continue }
+            $annotations = Invoke-GitHub -Arguments @('api',"repos/$Repository/check-runs/$($job.id)/annotations") | ConvertFrom-Json
+            if ($annotations | Where-Object message -Match '(?i)locked.*billing|billing.*locked') { $blockedByBilling = $true }
+        }
+    }
+    if ($blockedByBilling) {
+        $required = @('usr\bin\bash.exe','mingw64\bin\cmake.exe','mingw64\bin\c++.exe','mingw64\bin\Qt6Core.dll','mingw64\bin\Qt6StateMachine.dll')
+        $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Msys2Root $_)) })
+        if ($missing.Count -eq 0) {
+            $localHead = & git rev-parse HEAD
+            if ($localHead -ne $runState.head_sha -or (& git status --porcelain)) {
+                throw 'GitHub is billing-locked and the requested commit differs from the clean local checkout. Commit/push your edits, or explicitly use -Local to build the current working tree.'
+            }
+            Write-Warning 'GitHub blocked its runner due to account billing. Using the existing local toolchain; no packages will be installed.'
+            $localArguments = @{Local=$true; UseInstalledToolsOnly=$true; Msys2Root=$Msys2Root; Jobs=$Jobs}
+            if ($OpenConnectVersion) { $localArguments.OpenConnectVersion = $OpenConnectVersion }
+            & $PSCommandPath @localArguments
+            return
+        }
+        throw 'GitHub blocked this build due to account billing. Resolve https://github.com/settings/billing before using cloud builds. No local toolchain was installed.'
+    }
     $artifactState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId/artifacts") | ConvertFrom-Json
     $available = $artifactState.artifacts | Where-Object { $_.name -eq 'windows-package' -and -not $_.expired }
     if ($runState.conclusion -ne 'success' -or -not $available) {

@@ -67,6 +67,7 @@ echo "======================================================================="
 
 set -e
 
+if [ "${OCG_PACKAGES_READY:-0}" != 1 ]; then
 pacman --needed --noconfirm -S \
     git \
     unzip \
@@ -89,6 +90,7 @@ pacman --needed --noconfirm -S \
     mingw-w64-${BUILD_ARCH}-lz4 \
     mingw-w64-${BUILD_ARCH}-nsis \
     mingw-w64-${BUILD_ARCH}-libproxy
+fi
 
 set +e
 
@@ -102,8 +104,9 @@ if [ "x$BUILD_STOKEN" = "xno" ]; then
     echo "======================================================================="
     echo " Installing stoken..."
     echo "======================================================================="
-    pacman --needed --noconfirm -S \
-        mingw-w64-${BUILD_ARCH}-stoken
+    if [ "${OCG_PACKAGES_READY:-0}" != 1 ]; then
+        pacman --needed --noconfirm -S mingw-w64-${BUILD_ARCH}-stoken
+    fi
 else
     echo "======================================================================="
     echo " Building stoken..."

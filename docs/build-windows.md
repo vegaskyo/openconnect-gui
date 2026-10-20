@@ -12,6 +12,11 @@ It does not install MSYS2, Qt or a C++ compiler on your computer. If necessary,
 the script installs only GitHub CLI through winget and opens GitHub sign-in once.
 You need Actions access to the repository and an internet connection.
 
+If GitHub refuses to start its runner because the account is billing-locked,
+the command falls back to an already installed local Qt/MinGW environment,
+without installing missing packages. If no such environment is present, it
+reports the GitHub billing restriction and does not install a local SDK.
+
 ## Upgrades
 
 Push the upgraded source to GitHub, then run the command. Each branch push
