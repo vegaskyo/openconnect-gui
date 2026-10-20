@@ -295,7 +295,10 @@ void EditDialog::on_buttonBox_accepted()
     }
     ss->set_log_level(loglevel_rtab[type]);
 
-    ss->save();
+    if (ss->save() != 0) {
+        QMessageBox::warning(this, qApp->applicationName(), ss->m_last_err);
+        return;
+    }
     this->accept();
 }
 

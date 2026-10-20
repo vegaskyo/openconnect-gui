@@ -1,6 +1,9 @@
 History of user-visible changes.
 
 ## [v1.6.3](https://gitlab.com/openconnect/openconnect-gui/-/tree/main) (unreleased)
+- Update bundled OpenConnect to v9.21
+- Make the Save password option explicit in profile settings and login prompts; remove saved passwords when disabled
+- Fix certificate buffer cleanup and empty OpenConnect log messages
 - Limit the auto-generated and user-supplied interface name to the maximum length allowed by libopenconnect (#365, #378)
 - Store username and password for GlobalProtect profiles (#390)
 - Fix the encoding of strings passed to OpenConnect and GnuTLS functions (#393)

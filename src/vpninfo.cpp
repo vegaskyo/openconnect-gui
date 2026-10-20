@@ -33,6 +33,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <memory>
 
 static const char* OCG_PROTO_GLOBALPROTECT = "gp";
 static const char* OCG_PROTO_FORTINET = "fortinet";
@@ -71,7 +72,7 @@ static void progress_vfn(void* privdata, int level, const char* fmt, ...)
     va_end(args);
 
     len = strlen(buf);
-    if (buf[len - 1] == '\n')
+    if (len > 0 && buf[len - 1] == '\n')
         buf[len - 1] = 0;
     Logger::instance().addMessage(buf);
 }
@@ -217,13 +218,15 @@ static int process_auth_form(void* privdata, struct oc_auth_form* form)
             empty = 0;
         } else if (opt->type == OC_FORM_OPT_PASSWORD) {
             Logger::instance().addMessage(QString::fromUtf8("Password form: ") + QString::fromUtf8(opt->name));
+            const bool login_password = vpn->is_password_form_option(form, opt);
 
             if (vpn->form_pass_attempt == 0
                 && vpn->ss->get_password().isEmpty() == false
-                && vpn->is_password_form_option(form, opt)
+                && login_password
                ) {
                 openconnect_set_option_value(opt,
                     vpn->ss->get_password().toUtf8().data());
+                vpn->form_pass_attempt++;
                 empty = 0;
                 continue;
             }
@@ -234,19 +237,27 @@ static int process_auth_form(void* privdata, struct oc_auth_form* form)
                 QLineEdit::Password);
 
             dialog.set_banner(QString::fromUtf8(form->banner), QString::fromUtf8(form->message));
+            if (login_password) {
+                dialog.set_password_saving(vpn->ss->get_batch_mode());
+            }
             dialog.show();
             ok = dialog.result(text);
 
             if (!ok)
                 goto fail;
 
-            if (vpn->is_password_form_option(form, opt)
+            if (login_password) {
+                vpn->ss->set_batch_mode(dialog.password_saving());
+            }
+            if (login_password
                 && (vpn->password_set == 0 || vpn->form_pass_attempt != 0)) {
                 vpn->ss->set_password(text);
                 vpn->password_set = 1;
             }
             openconnect_set_option_value(opt, text.toUtf8().data());
-            vpn->form_pass_attempt++;
+            if (login_password) {
+                vpn->form_pass_attempt++;
+            }
             empty = 0;
         } else {
             Logger::instance().addMessage(QLatin1String("unknown type ") + QString::number((int)opt->type));
@@ -269,6 +280,10 @@ static int validate_peer_cert(void* privdata, const char* reason)
     VpnInfo* vpn = static_cast<VpnInfo*>(privdata);
     unsigned char* der = nullptr;
     int der_size = openconnect_get_peer_cert_DER(vpn->vpninfo, &der);
+    auto free_cert_info = [vpn](unsigned char* data) {
+        openconnect_free_cert_info(vpn->vpninfo, data);
+    };
+    std::unique_ptr<unsigned char, decltype(free_cert_info)> der_guard(der, free_cert_info);
     if (der_size <= 0) {
         Logger::instance().addMessage(QObject::tr("Peer's certificate has invalid size!"));
         return -1;
@@ -292,7 +307,7 @@ static int validate_peer_cert(void* privdata, const char* reason)
     QString dstr;
     if (details != nullptr) {
         dstr = QString::fromUtf8(details);
-        free(details);
+        openconnect_free_cert_info(vpn->vpninfo, details);
     }
 
     bool save = false;
@@ -694,7 +709,7 @@ void VpnInfo::logVpncScriptOutput()
             Logger::instance().addMessage(QLatin1String("Could not remove ") + QDir::toNativeSeparators(tfile) + ": " + file.errorString());
         }
 
-        if (ss->get_batch_mode() != true && bannerMessage.isEmpty() == false) {
+        if (bannerMessage.isEmpty() == false) {
             // TODO: msgbox title; e.g. Accept/Continue + Disconnect on buttons
             MyMsgBox msgBox(this->m,
                 bannerMessage,
@@ -732,7 +747,7 @@ bool VpnInfo::is_username_form_option(struct oc_auth_form* form, struct oc_form_
 
     if (form && opt && opt->name) {
         if (strcasecmp(OCG_PROTO_GLOBALPROTECT, protocolName.constData()) == 0) {
-            ret = ( (strcasecmp(form->auth_id, "_login") == 0) && (strcasecmp(opt->name, "user") == 0) );
+            ret = ( form->auth_id && (strcasecmp(form->auth_id, "_login") == 0) && (strcasecmp(opt->name, "user") == 0) );
         }
         else {
             ret = ( strcasecmp(opt->name, "username") == 0 );
@@ -749,10 +764,10 @@ bool VpnInfo::is_password_form_option(struct oc_auth_form* form, struct oc_form_
 
     if (form && opt && opt->name) {
         if (strcasecmp(OCG_PROTO_GLOBALPROTECT, protocolName.constData()) == 0) {
-            ret = ( (strcasecmp(form->auth_id, "_login") == 0) && (strcasecmp(opt->name, "passwd") == 0) );
+            ret = ( form->auth_id && (strcasecmp(form->auth_id, "_login") == 0) && (strcasecmp(opt->name, "passwd") == 0) );
         }
         else if (strcasecmp(OCG_PROTO_FORTINET, protocolName.constData()) == 0) {
-            ret = ( (strcasecmp(form->auth_id, "_login") == 0) && (strcasecmp(opt->name, "credential") == 0) );
+            ret = ( form->auth_id && (strcasecmp(form->auth_id, "_login") == 0) && (strcasecmp(opt->name, "credential") == 0) );
         }
         else {
             ret = ( strcasecmp(opt->name, "password") == 0 );

@@ -637,10 +637,10 @@ The default timeout is 300 seconds, which means that openconnect can recover VPN
         <item row="0" column="1">
          <widget class="QCheckBox" name="batchModeBox">
           <property name="toolTip">
-           <string>Enable this to remember passwords for this server</string>
+           <string>Remember the login password for this profile. One-time codes are not saved. Uncheck and save to remove the saved password.</string>
           </property>
           <property name="text">
-           <string>Batch mode</string>
+           <string>Save password</string>
           </property>
          </widget>
         </item>

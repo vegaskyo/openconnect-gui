@@ -18,6 +18,10 @@
  */
 
 #include "MyInputDialog.h"
+#include <QCheckBox>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QVBoxLayout>
 
 MyInputDialog::MyInputDialog(QWidget* w, QString title, QString short_desc, QStringList list)
     : w(w)
@@ -58,6 +62,17 @@ void MyInputDialog::set_banner(QString banner, QString message)
     this->message = message.trimmed();
 }
 
+void MyInputDialog::set_password_saving(bool enabled)
+{
+    offer_password_saving = true;
+    save_password = enabled;
+}
+
+bool MyInputDialog::password_saving() const
+{
+    return save_password;
+}
+
 bool MyInputDialog::event(QEvent* ev)
 {
     res = false;
@@ -74,6 +89,30 @@ bool MyInputDialog::event(QEvent* ev)
         to_print += short_desc;
         if (this->have_list) {
             text = QInputDialog::getItem(w, title, to_print, list, 0, false, &res);
+        } else if (offer_password_saving) {
+            QDialog dialog(w);
+            dialog.setWindowTitle(title);
+            QVBoxLayout layout(&dialog);
+            QLabel label(to_print, &dialog);
+            label.setWordWrap(true);
+            QLineEdit input(&dialog);
+            input.setEchoMode(type);
+            QCheckBox remember(tr("Save password"), &dialog);
+            remember.setToolTip(tr("Remember the login password for this profile. One-time codes are not saved."));
+            remember.setChecked(save_password);
+            QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+            connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            layout.addWidget(&label);
+            layout.addWidget(&input);
+            layout.addWidget(&remember);
+            layout.addWidget(&buttons);
+            input.setFocus();
+            res = dialog.exec() == QDialog::Accepted;
+            if (res) {
+                text = input.text();
+                save_password = remember.isChecked();
+            }
         } else {
             text = QInputDialog::getText(w, title, to_print, type, QString(), &res);
         }

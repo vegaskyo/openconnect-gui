@@ -724,7 +724,9 @@ static void main_loop(VpnInfo* vpninfo, MainWindow* m)
     vpninfo->get_cipher_info(cstp, dtls);
     m->vpn_status_changed(STATUS_CONNECTED, dns, ip, ip6, cstp, dtls);
 
-    vpninfo->ss->save();
+    if (vpninfo->ss->save() != 0) {
+        Logger::instance().addMessage(QObject::tr("Could not save profile: %1").arg(vpninfo->ss->m_last_err));
+    }
     vpninfo->mainloop();
 
 fail: // LCA: drop this 'goto' and optimize values...

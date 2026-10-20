@@ -34,6 +34,8 @@ public:
 
     void show();
     void set_banner(QString banner, QString message);
+    void set_password_saving(bool enabled);
+    bool password_saving() const;
     virtual bool event(QEvent* ev);
     bool result(QString& text);
 
@@ -49,4 +51,6 @@ private:
     QStringList list;
     bool have_list;
     QLineEdit::EchoMode type;
+    bool offer_password_saving = false;
+    bool save_password = false;
 };

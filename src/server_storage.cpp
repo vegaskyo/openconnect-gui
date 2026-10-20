@@ -187,6 +187,8 @@ int StoredServer::load(QString& name)
 
     bool ret = false;
 
+    this->m_password.clear();
+    this->m_groupname.clear();
     if (this->m_batch_mode == true) {
         this->m_groupname = settings.value("groupname").toString();
         ret = CryptData::decode(this->m_server_gateway,
@@ -258,6 +260,15 @@ int StoredServer::load(QString& name)
 
 int StoredServer::save()
 {
+    QByteArray encoded_password;
+    if (m_batch_mode && !m_password.isEmpty()) {
+        encoded_password = CryptData::encode(m_server_gateway, m_password);
+        if (encoded_password.isEmpty()) {
+            m_last_err = "Could not encrypt the password; the profile was not saved";
+            return -1;
+        }
+    }
+
     OcSettings settings;
     settings.beginGroup(PREFIX + this->m_label);
     settings.setValue("server", this->m_server_gateway);
@@ -270,9 +281,14 @@ int StoredServer::save()
     settings.setValue("username", this->m_username);
 
     if (this->m_batch_mode == true) {
-        settings.setValue("password",
-            CryptData::encode(this->m_server_gateway, this->m_password));
+        if (encoded_password.isEmpty())
+            settings.remove("password");
+        else
+            settings.setValue("password", encoded_password);
         settings.setValue("groupname", this->m_groupname);
+    } else {
+        settings.remove("password");
+        settings.remove("groupname");
     }
 
     QByteArray data;

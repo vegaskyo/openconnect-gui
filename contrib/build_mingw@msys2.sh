@@ -8,6 +8,8 @@
 # (c) 2016-2021, Lubomir Carik
 #
 
+set -e
+
 SAVE_PWD=$(pwd)
 BUILD_TYPE="${BUILD_TYPE:-Debug}"
 BUILD_DIR="${BUILD_DIR:-build-$MSYSTEM/openconnect-gui}"
@@ -31,7 +33,7 @@ echo "Starting under $MSYSTEM build environment ($ROOT_DIR)..."
 if [ "$1" == "--head" ]; then
     export OC_TAG=master
 else
-    export OC_TAG=v9.12
+    export OC_TAG=v9.21
 fi
 
 echo "======================================================================="
@@ -42,7 +44,7 @@ pacman --needed --noconfirm -S \
 	zip \
 	unzip \
 	coreutils \
-	mingw-w64-x86_64-jq \
+	jq \
 	mingw-w64-x86_64-curl
 
 if [ -z "$QT6" ];then

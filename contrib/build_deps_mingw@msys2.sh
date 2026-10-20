@@ -41,7 +41,7 @@ echo "Starting under $MSYSTEM build environment ($ROOT_DIR)..."
 if [ "$1" == "--head" ]; then
     export OC_TAG=master
 else
-    export OC_TAG=v9.12
+    export OC_TAG=v9.21
 fi
 
 echo "OpenConnect: $OC_TAG"
@@ -74,7 +74,7 @@ pacman --needed --noconfirm -S \
     base-devel \
     autotools \
     mingw-w64-x86_64-toolchain \
-    mingw-w64-x86_64-jq \
+    jq \
     mingw-w64-${BUILD_ARCH}-gcc \
     mingw-w64-${BUILD_ARCH}-make \
     mingw-w64-${BUILD_ARCH}-gnutls \
@@ -146,6 +146,12 @@ set -e
 echo "hash:"
 git rev-parse --short HEAD | tee ../openconnect-${OC_TAG}_$MSYSTEM.hash
 
+# Newer mingw-w64 headers expose the secure CRT API through stdlib.h.
+# OpenConnect 9.21 still includes the removed sec_api header directly.
+if [ ! -f "${MINGW_PREFIX}/include/sec_api/stdlib_s.h" ]; then
+    sed -i 's|<sec_api/stdlib_s.h>|<stdlib.h>|g' compat.c configure.ac
+fi
+
 # For openconnect we need wintun locally to avoid downloading
 # which is unreliable.
 #WINTUNFILE=$(cat Makefile.am|grep ^WINTUNDRIVER |cut -d '=' -f 2|sed 's/^\s//')
@@ -193,9 +199,9 @@ cp ${MINGW_PREFIX}/bin/libffi-8.dll .
 cp ${MINGW_PREFIX}/bin/libgcc_*-1.dll .
 cp ${MINGW_PREFIX}/bin/libgmp-10.dll .
 cp ${MINGW_PREFIX}/bin/libgnutls-30.dll .
-cp ${MINGW_PREFIX}/bin/libhogweed-6.dll .
+cp ${MINGW_PREFIX}/bin/libhogweed-7.dll .
 cp ${MINGW_PREFIX}/bin/libintl-8.dll .
-cp ${MINGW_PREFIX}/bin/libnettle-8.dll .
+cp ${MINGW_PREFIX}/bin/libnettle-9.dll .
 cp ${MINGW_PREFIX}/bin/libp11-kit-0.dll .
 cp ${MINGW_PREFIX}/bin/libtasn1-6.dll .
 cp ${MINGW_PREFIX}/bin/libwinpthread-1.dll .
@@ -217,7 +223,7 @@ cp ../../openconnect/build-${BUILD_ARCH}/.libs/openconnect.exe .
 
 echo "Getting vpnc-script from https://gitlab.com/openconnect/vpnc-scripts/..."
 
-curl --no-progress-meter  -o vpnc-script-win.js https://gitlab.com/openconnect/vpnc-scripts/-/raw/master/vpnc-script-win.js
+curl --fail --location --retry 3 --no-progress-meter -o vpnc-script-win.js https://gitlab.com/openconnect/vpnc-scripts/-/raw/master/vpnc-script-win.js
 
 echo "Extracting wintun.dll..."
 unzip -j ${ROOT_DIR}/wintun/wintun-${WINTUN_VERSION}.zip "wintun/bin/${WINTUN_ARCH}/wintun.dll" -d .
