@@ -38,7 +38,6 @@ if(IS_DIRECTORY ${GIT_ROOT_DIR}/.git)
     endif()
 
     set(PROJECT_VERSION "${GIT_COMMIT_ID}")
-    #string(APPEND PROJECT_VERSION " (git)")
     message(STATUS "Version: ${PROJECT_VERSION} [git]")
 else()
     message(STATUS "Version: ${PROJECT_VERSION} [cmake]")
@@ -61,11 +60,10 @@ if(NOT APPLE)
     )
 endif()
 
-message(STATUS "Processing app info file...")
-file(READ ${INPUT_DIR}/${PROJECT_NAME}.cpp.in cpp_temporary)
-string(CONFIGURE "${cpp_temporary}" cpp_updated @ONLY)
-file(WRITE ${OUTPUT_DIR}/${PROJECT_NAME}.cpp.tmp "${cpp_updated}")
-execute_process(
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${OUTPUT_DIR}/${PROJECT_NAME}.cpp.tmp ${OUTPUT_DIR}/${PROJECT_NAME}.cpp
-)
+message(STATUS "Processing config.h file...")
+file(READ ${OUTPUT_DIR}/config.h config_temp)
+string(FIND "${config_temp}" "undef PROJECT_VERSION" ALREADY_UPDATED)
+
+if(${ALREADY_UPDATED} LESS 0)
+file(APPEND ${OUTPUT_DIR}/config.h "#undef PROJECT_VERSION\n#define PROJECT_VERSION \"${PROJECT_VERSION}\"\n")
+endif()

@@ -1,8 +1,9 @@
 ### Snapshot builds
 
-If you are brave and you would like to try [upcoming development snapshots](https://bit.ly/2D7QEi2)
-of OpenConnect-GUI or [OpenConnect](https://www.infradead.org/openconnect/) for Windows.
-(I'm not developer on second mentioned project, but this GUI is based on this great project).
+If you are brave and you would like to try upcoming development snapshots
+you can check the generated artifacts from recent builds:
 
-These are unofficial builds, without warranty, please don't complain... ;-)
+ - https://gitlab.com/openconnect/openconnect-gui/-/pipelines
+
+These are unofficial builds, and the artifacts expire weekly please don't complain... ;-)
 

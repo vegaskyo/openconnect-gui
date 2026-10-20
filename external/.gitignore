@@ -1,3 +1,4 @@
-*.zip
-*.zip.sha512
-*.txt
+/*.zip
+/*.zip.sha512
+/*.txt
+/*.hash

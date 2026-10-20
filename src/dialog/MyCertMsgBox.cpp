@@ -51,7 +51,7 @@ bool MyCertMsgBox::event(QEvent* ev)
         msgBox->setInformativeText(t2);
         msgBox->setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
         msgBox->setDefaultButton(QMessageBox::Cancel);
-        msgBox->setButtonText(QMessageBox::Ok, oktxt);
+        msgBox->addButton(oktxt, QMessageBox::ApplyRole);
         msgBox->setDetailedText(details);
 
         if (msgBox->exec() == QMessageBox::Cancel) {

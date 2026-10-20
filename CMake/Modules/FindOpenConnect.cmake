@@ -20,7 +20,7 @@ if(OPENCONNECT_INCLUDE_DIRS)
 	set(OpenConnect_FIND_QUIETLY TRUE)
 endif(OPENCONNECT_INCLUDE_DIRS)
 
-if(NOT WIN32)
+if(CMAKE_CROSSCOMPILING OR NOT WIN32)
 	# use pkg-config to get the directories and then use these values
 	# in the FIND_PATH() and FIND_LIBRARY() calls
 	find_package(PkgConfig REQUIRED)
@@ -38,7 +38,7 @@ if(NOT WIN32)
 					ERROR_VARIABLE output
 				)
 				string(STRIP ${output} output)
-				set(OPENCONNECT_VPNC_SCRIPT "${output}/../etc/vpnc-script")
+				set(OPENCONNECT_VPNC_SCRIPT "${output}/../etc/vpnc/vpnc-script")
 			else()
 				execute_process(
 					COMMAND ${OPENCONNECT_EXECUTABLE} -help
@@ -51,7 +51,7 @@ if(NOT WIN32)
 			endif()
 		endif()
 	endif()
-endif(NOT WIN32)
+endif(CMAKE_CROSSCOMPILING OR NOT WIN32)
 
 if(OPENCONNECT_FOUND)
 	if(NOT OpenConnect_FIND_QUIETLY)

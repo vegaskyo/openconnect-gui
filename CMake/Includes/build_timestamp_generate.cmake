@@ -2,8 +2,7 @@
 
 # TODO: add MSVC/Xcode support
 if(NOT BUILD_TYPE STREQUAL "Debug")
-    #string(TIMESTAMP formattedTimestamp "%Y-%m-%d %wT%H:%M:%S")
-    string(TIMESTAMP formattedTimestamp "%d.%m.%Y %H:%M:%S")
+    string(TIMESTAMP formattedTimestamp "%Y-%m-%d %H:%M:%SZ" UTC)
     message(STATUS "Timestamp: ${formattedTimestamp}")
 else()
     string(TIMESTAMP formattedTimestamp "N/A (non-release build)")

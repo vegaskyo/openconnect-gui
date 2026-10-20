@@ -18,11 +18,15 @@
  */
 
 #include "MyInputDialog.h"
+#include <QCheckBox>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QVBoxLayout>
 
-MyInputDialog::MyInputDialog(QWidget* w, QString t1, QString t2, QStringList list)
+MyInputDialog::MyInputDialog(QWidget* w, QString title, QString short_desc, QStringList list)
     : w(w)
-    , t1(t1)
-    , t2(t2)
+    , title(title)
+    , short_desc(short_desc)
     , list(list)
     , have_list(true)
 {
@@ -30,10 +34,10 @@ MyInputDialog::MyInputDialog(QWidget* w, QString t1, QString t2, QStringList lis
     this->moveToThread(QApplication::instance()->thread());
 }
 
-MyInputDialog::MyInputDialog(QWidget* w, QString t1, QString t2, QLineEdit::EchoMode type)
+MyInputDialog::MyInputDialog(QWidget* w, QString title, QString short_desc, QLineEdit::EchoMode type)
     : w(w)
-    , t1(t1)
-    , t2(t2)
+    , title(title)
+    , short_desc(short_desc)
     , have_list(false)
     , type(type)
 {
@@ -52,14 +56,65 @@ void MyInputDialog::show()
     QCoreApplication::postEvent(this, new QEvent(QEvent::User));
 }
 
+void MyInputDialog::set_banner(QString banner, QString message)
+{
+    this->banner = banner.trimmed();
+    this->message = message.trimmed();
+}
+
+void MyInputDialog::set_password_saving(bool enabled)
+{
+    offer_password_saving = true;
+    save_password = enabled;
+}
+
+bool MyInputDialog::password_saving() const
+{
+    return save_password;
+}
+
 bool MyInputDialog::event(QEvent* ev)
 {
     res = false;
     if (ev->type() == QEvent::User) {
+        QString to_print;
+        if (this->banner.isEmpty() != true) {
+            to_print += this->banner + QLatin1String("<br><br>");
+        }
+
+        if (this->message.isEmpty() != true) {
+            to_print += this->message + QLatin1String("<br><br>");
+        }
+
+        to_print += short_desc;
         if (this->have_list) {
-            text = QInputDialog::getItem(w, t1, t2, list, 0, false, &res);
+            text = QInputDialog::getItem(w, title, to_print, list, 0, false, &res);
+        } else if (offer_password_saving) {
+            QDialog dialog(w);
+            dialog.setWindowTitle(title);
+            QVBoxLayout layout(&dialog);
+            QLabel label(to_print, &dialog);
+            label.setWordWrap(true);
+            QLineEdit input(&dialog);
+            input.setEchoMode(type);
+            QCheckBox remember(tr("Save password"), &dialog);
+            remember.setToolTip(tr("Remember the login password for this profile. One-time codes are not saved."));
+            remember.setChecked(save_password);
+            QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+            connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            layout.addWidget(&label);
+            layout.addWidget(&input);
+            layout.addWidget(&remember);
+            layout.addWidget(&buttons);
+            input.setFocus();
+            res = dialog.exec() == QDialog::Accepted;
+            if (res) {
+                text = input.text();
+                save_password = remember.isChecked();
+            }
         } else {
-            text = QInputDialog::getText(w, t1, t2, type, QString(), &res);
+            text = QInputDialog::getText(w, title, to_print, type, QString(), &res);
         }
 
         mutex.unlock();

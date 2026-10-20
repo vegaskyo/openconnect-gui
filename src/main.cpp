@@ -29,7 +29,6 @@
 
 extern "C" {
 #include <gnutls/pkcs11.h>
-#include <openconnect.h>
 }
 
 #include <QApplication>
@@ -37,7 +36,7 @@ extern "C" {
 #include <QMessageBox>
 #endif
 #include <QCommandLineParser>
-#include <QSettings>
+#include <OcSettings.h>
 #include <QtSingleApplication>
 
 #ifdef __MACH__
@@ -99,7 +98,7 @@ int pin_callback(void* userdata, int attempt, const char* token_url,
         type = QObject::tr("security officer");
     }
 
-    QString outtext = QObject::tr("Please enter the ") + type + QObject::tr(" PIN for ") + QLatin1String(token_label) + ".";
+    QString outtext = QObject::tr("Please enter the %1 PIN for %2.").arg(type).arg(token_label);
     if (flags & GNUTLS_PKCS11_PIN_FINAL_TRY) {
         outtext += QObject::tr(" This is the FINAL try!");
     }
@@ -117,44 +116,41 @@ int pin_callback(void* userdata, int attempt, const char* token_url,
         return -1;
     }
 
-    snprintf(pin, pin_max, "%s", text.toLatin1().data());
+    snprintf(pin, pin_max, "%s", text.toUtf8().data());
     return 0;
 }
 
 int main(int argc, char* argv[])
 {
+    bool haveTray = false;
+
     qputenv("LOG2FILE", "1");
 
-#if !defined(Q_OS_MACOS)
-    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-#endif
-    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
-
     qRegisterMetaType<Logger::Message>();
-
-#ifdef PROJ_INI_SETTINGS
-    QSettings::setDefaultFormat(QSettings::IniFormat);
-#endif
 
 #if defined(Q_OS_MACOS) && defined(PROJ_ADMIN_PRIV_ELEVATION)
     /* Re-launching with root privs on OS X needs Qt to allow setsuid */
     QApplication::setSetuidAllowed(true);
 #endif
-    QCoreApplication::setApplicationName(appDescription);
-    QCoreApplication::setApplicationVersion(appVersion);
-    QCoreApplication::setOrganizationName(appOrganizationName);
-    QCoreApplication::setOrganizationDomain(appOrganizationDomain);
+    QCoreApplication::setApplicationName(APP_NAME);
+    QCoreApplication::setApplicationVersion(PROJECT_VERSION);
+    QCoreApplication::setOrganizationName(PRODUCT_NAME_COMPANY);
+    QCoreApplication::setOrganizationDomain(PRODUCT_NAME_COMPANY_DOMAIN);
 
     QtSingleApplication app(argc, argv);
     if (app.isRunning()) {
-        QSettings settings;
-        if (settings.value(QLatin1Literal("Settings/singleInstanceMode"), true).toBool()) {
+        OcSettings settings;
+        if (settings.value("Settings/singleInstanceMode", true).toBool()) {
             app.sendMessage("Wake up!");
             return 0;
         }
     }
-    app.setApplicationDisplayName(appDescriptionLong);
+    app.setApplicationDisplayName(APP_NAME);
     app.setQuitOnLastWindowClosed(false);
+
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        haveTray=true;
+    }
 
 #if defined(Q_OS_MACOS) && defined(PROJ_ADMIN_PRIV_ELEVATION)
     if (geteuid() != 0) {
@@ -184,7 +180,7 @@ int main(int argc, char* argv[])
     parser.setApplicationDescription(
         QObject::tr("OpenConnect is a VPN client, that utilizes TLS and DTLS "
                     "for secure session establishment, and is compatible "
-                    "with the CISCO AnyConnect SSL VPN protocol."));
+                    "with many VPN protocols."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption({ { "s", "server" },
@@ -196,7 +192,7 @@ int main(int argc, char* argv[])
     parser.process(app);
 
     const QString profileName{ parser.value(QLatin1String("server")) };
-    MainWindow mainWindow(nullptr, profileName);
+    MainWindow mainWindow(nullptr, haveTray, profileName);
     app.setActivationWindow(&mainWindow);
 #ifdef PROJ_PKCS11
     gnutls_pkcs11_set_pin_function(pin_callback, &mainWindow);
@@ -207,6 +203,8 @@ int main(int argc, char* argv[])
 #endif
 
     mainWindow.show();
+    mainWindow.setWindowTitle(APP_NAME);
+
     QObject::connect(&app, &QtSingleApplication::messageReceived,
         [&mainWindow](const QString& message) {
             Logger::instance().addMessage(message);

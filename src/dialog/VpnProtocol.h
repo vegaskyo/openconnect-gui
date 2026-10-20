@@ -4,6 +4,7 @@
 #include <QString>
 
 struct VpnProtocol {
+    unsigned index;
     QString name;
     QString prettyName;
     QString description;

@@ -6,11 +6,13 @@
 /*.pro.user
 /CMakeLists.txt.user
 
-# temporary build folder
+# temporary build folders
 build-release*/
+build*/
 
 
 # temporary...
 _xxx/
 *.zip
 *.exe
+*.exe.sha512

@@ -1,10 +1,7 @@
 #include "VpnProtocolModel.h"
 
-// FIXME: this include should to into <openconnect.h>
-#ifdef _WIN32
-#include <winsock2.h>
-#endif
-#include <openconnect.h>
+#include "common.h"
+#include "logger.h"
 
 VpnProtocolModel::VpnProtocolModel(QObject* parent)
     : QAbstractListModel(parent)
@@ -32,29 +29,36 @@ QVariant VpnProtocolModel::data(const QModelIndex& index, int role) const
         return QVariant{ protocol.prettyName };
     case Qt::ToolTipRole:
         return QVariant{ protocol.description };
-    case Qt::UserRole + 1:
+    case ROLE_PROTOCOL_NAME:
         return QVariant{ protocol.name };
     }
 
     return QVariant();
 }
 
-#if OPENCONNECT_CHECK_VER(5, 5)
+unsigned VpnProtocolModel::findIndex(const QString name)
+{
+    QList<VpnProtocol>::iterator i;
+
+    for (i = this->m_protocols.begin(); i != this->m_protocols.end(); ++i) {
+        if ((*i).name.compare(name) == 0) {
+            return ((*i).index);
+        }
+    }
+
+    Logger::instance().addMessage(QObject::tr("Unknown protocol: ") + name);
+    return 0;
+}
+
 void VpnProtocolModel::loadProtocols()
 {
     struct oc_vpn_proto* protos = nullptr;
+    unsigned i = 0;
 
     if (openconnect_get_supported_protocols(&protos) >= 0) {
         for (oc_vpn_proto* p = protos; p->name; ++p) {
-            m_protocols.append({ p->name, p->pretty_name, p->description });
+            m_protocols.append({ i++, p->name, p->pretty_name, p->description });
         }
         openconnect_free_supported_protocols(protos);
     }
 }
-#else
-void VpnProtocolModel::loadProtocols()
-{
-    m_protocols.append({ "anyconnect", "Cisco AnyConnect", "" });
-    m_protocols.append({ "nc", "Juniper Network Connect", "" });
-}
-#endif

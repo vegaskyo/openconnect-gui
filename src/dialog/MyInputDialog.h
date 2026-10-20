@@ -28,22 +28,29 @@
 class MyInputDialog : public QObject {
 
 public:
-    MyInputDialog(QWidget* w, QString t1, QString t2, QStringList list);
-    MyInputDialog(QWidget* w, QString t1, QString t2, QLineEdit::EchoMode type);
+    MyInputDialog(QWidget* w, QString title, QString short_desc, QStringList list);
+    MyInputDialog(QWidget* w, QString title, QString short_desc, QLineEdit::EchoMode type);
     ~MyInputDialog();
 
     void show();
+    void set_banner(QString banner, QString message);
+    void set_password_saving(bool enabled);
+    bool password_saving() const;
     virtual bool event(QEvent* ev);
     bool result(QString& text);
 
 private:
     QString text;
+    QString banner;
+    QString message;
     bool res;
     QMutex mutex;
     QWidget* w;
-    QString t1;
-    QString t2;
+    QString title;
+    QString short_desc;
     QStringList list;
     bool have_list;
     QLineEdit::EchoMode type;
+    bool offer_password_saving = false;
+    bool save_password = false;
 };

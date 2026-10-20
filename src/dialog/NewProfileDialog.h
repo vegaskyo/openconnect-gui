@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QUrl>
 
 class QAbstractButton;
 namespace Ui {
@@ -13,6 +14,9 @@ class NewProfileDialog : public QDialog {
 public:
     explicit NewProfileDialog(QWidget* parent = 0);
     ~NewProfileDialog();
+    void setUrl(QUrl &);
+    static QString urlToName(QUrl & url);
+    void setQuickConnect();
 
     QString getNewProfileName() const;
 
@@ -31,7 +35,9 @@ private slots:
     void on_buttonBox_accepted();
 
 private:
+    void updateName(QUrl &);
     void updateButtons();
 
     Ui::NewProfileDialog* ui;
+    bool quick_connect;
 };

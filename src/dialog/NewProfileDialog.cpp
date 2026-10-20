@@ -6,7 +6,7 @@
 #include "server_storage.h"
 
 #include <QPushButton>
-#include <QSettings>
+#include <OcSettings.h>
 #include <QUrl>
 
 #include <memory>
@@ -24,11 +24,41 @@ NewProfileDialog::NewProfileDialog(QWidget* parent)
 
     ui->buttonBox->button(QDialogButtonBox::Save)->setEnabled(false);
     ui->buttonBox->button(QDialogButtonBox::SaveAll)->setEnabled(false);
+
+    quick_connect = false;
 }
 
 NewProfileDialog::~NewProfileDialog()
 {
     delete ui;
+}
+
+void NewProfileDialog::setQuickConnect()
+{
+    ui->buttonBox->button(QDialogButtonBox::SaveAll)->setEnabled(true);
+    ui->buttonBox->button(QDialogButtonBox::Save)->setVisible(false);
+    ui->checkBoxCustomize->setVisible(false);
+    ui->protocolComboBox->setFocus();
+    this->quick_connect = true;
+}
+
+QString NewProfileDialog::urlToName(QUrl & url)
+{
+    if (url.port(443) == 443)
+        return url.host();
+    else
+        return (url.host() + tr(":%1").arg(url.port(443)));
+}
+
+void NewProfileDialog::updateName(QUrl & url)
+{
+    ui->lineEditName->setText(urlToName(url));
+}
+
+void NewProfileDialog::setUrl(QUrl & url)
+{
+    updateName(url);
+    ui->lineEditGateway->setText(url.toString());
 }
 
 QString NewProfileDialog::getNewProfileName() const
@@ -51,9 +81,9 @@ void NewProfileDialog::changeEvent(QEvent* e)
 void NewProfileDialog::on_checkBoxCustomize_toggled(bool checked)
 {
     if (checked == false) {
-        QUrl url(ui->lineEditGateway->text());
+        QUrl url = QUrl::fromUserInput(ui->lineEditGateway->text());
         if (url.isValid()) {
-            ui->lineEditName->setText(url.host());
+            updateName(url);
         }
 
         ui->lineEditGateway->setFocus();
@@ -64,14 +94,15 @@ void NewProfileDialog::on_checkBoxCustomize_toggled(bool checked)
 
 void NewProfileDialog::on_lineEditName_textChanged(const QString&)
 {
-    updateButtons();
+    if (quick_connect == false)
+        updateButtons();
 }
 
 void NewProfileDialog::on_lineEditGateway_textChanged(const QString& text)
 {
     QUrl url(text, QUrl::StrictMode);
     if (ui->checkBoxCustomize->isChecked() == false && (url.isValid() || text.isEmpty())) {
-        ui->lineEditName->setText(url.host());
+        updateName(url);
     }
 
     updateButtons();
@@ -86,7 +117,7 @@ void NewProfileDialog::updateButtons()
         enableButtons = true;
 
         // TODO: refactor this too :/
-        QSettings settings;
+        OcSettings settings;
         for (const auto& key : settings.allKeys()) {
             if (key.startsWith(PREFIX) && key.endsWith("/server")) {
                 QString str{ key };
@@ -106,7 +137,7 @@ void NewProfileDialog::updateButtons()
 
 void NewProfileDialog::on_buttonBox_clicked(QAbstractButton* button)
 {
-    if (ui->buttonBox->standardButton(button) == QDialogButtonBox::SaveAll) {
+    if (quick_connect == false && ui->buttonBox->standardButton(button) == QDialogButtonBox::SaveAll) {
         emit connect();
     }
 }
@@ -115,9 +146,8 @@ void NewProfileDialog::on_buttonBox_accepted()
 {
     auto ss{ std::make_unique<StoredServer>() };
     ss->set_label(ui->lineEditName->text());
-    ss->set_servername(ui->lineEditGateway->text());
-    ss->set_protocol_id(ui->protocolComboBox->currentIndex());
-    ss->set_protocol_name(ui->protocolComboBox->currentData(Qt::UserRole + 1).toString());
+    ss->set_server_gateway(ui->lineEditGateway->text());
+    ss->set_protocol_name(ui->protocolComboBox->currentData(ROLE_PROTOCOL_NAME).toString());
     ss->save();
 
     accept();

@@ -19,7 +19,8 @@
 
 #include "server_storage.h"
 #include "cryptdata.h"
-#include <QSettings>
+#include "common.h"
+#include <OcSettings.h>
 #include <cstdio>
 
 StoredServer::~StoredServer(void)
@@ -33,13 +34,13 @@ StoredServer::StoredServer()
     , m_disable_udp{ false }
     , m_reconnect_timeout{ 300 }
     , m_dtls_attempt_period{ 25 }
-    , m_protocol_id(0)
-    , m_server_hash_algo(0)
+    , m_server_pin_algo(0)
+    , m_log_level (-1)
 {
     set_window(nullptr);
 }
 
-// LCA: drop thsi define from whole project...
+// LCA: drop this define from whole project...
 #define PREFIX "server:"
 
 void StoredServer::clear_password()
@@ -67,10 +68,10 @@ void StoredServer::clear_ca()
     this->m_ca_cert.clear();
 }
 
-void StoredServer::clear_server_hash()
+void StoredServer::clear_server_pin()
 {
-    this->m_server_hash.clear();
-    this->m_server_hash_algo = 0;
+    this->m_server_pin.clear();
+    this->m_server_pin_algo = 0;
 }
 
 QString StoredServer::get_cert_file()
@@ -135,26 +136,45 @@ int StoredServer::set_client_key(const QString& filename)
     return ret;
 }
 
-void StoredServer::get_server_hash(QString& hash) const
+bool StoredServer::server_pin_algo_is_legacy(void)
 {
-    if (this->m_server_hash_algo == 0) {
+    if (this->m_server_pin_algo != GNUTLS_DIG_SHA256)
+        return true;
+    else
+        return false;
+}
+
+void StoredServer::get_server_pin(QString& hash) const
+{
+    if (this->m_server_pin_algo == 0) {
         hash = "";
     } else {
-        hash = gnutls_mac_get_name((gnutls_mac_algorithm_t)this->m_server_hash_algo);
-        hash += ":";
-        hash += this->m_server_hash.toHex();
+        if (this->m_server_pin_algo == GNUTLS_DIG_SHA256) {
+            hash = "pin-sha256:";
+            hash += this->m_server_pin.toBase64();
+        } else {
+            hash = gnutls_mac_get_name((gnutls_mac_algorithm_t)this->m_server_pin_algo);
+            hash += ":";
+            hash += this->m_server_pin.toHex();
+        }
     }
 }
 
+// Returns: < 0 on error to load
+//          0 if no entry existed
+//          1 if an entry existed
 int StoredServer::load(QString& name)
 {
     this->m_label = name;
-    QSettings settings;
+    OcSettings settings;
+    int rval = 1;
+
     settings.beginGroup(PREFIX + name);
 
-    this->m_servername = settings.value("server").toString();
-    if (this->m_servername.isEmpty() == true) {
-        this->m_servername = name;
+    this->m_server_gateway = settings.value("server").toString();
+    if (this->m_server_gateway.isEmpty() == true) {
+        this->m_server_gateway = name;
+        rval = 0;
     }
 
     this->m_username = settings.value("username").toString();
@@ -166,11 +186,12 @@ int StoredServer::load(QString& name)
     this->m_dtls_attempt_period = settings.value("dtls_attempt_period", 25).toInt();
 
     bool ret = false;
-    int rval = 0;
 
+    this->m_password.clear();
+    this->m_groupname.clear();
     if (this->m_batch_mode == true) {
         this->m_groupname = settings.value("groupname").toString();
-        ret = CryptData::decode(this->m_servername,
+        ret = CryptData::decode(this->m_server_gateway,
             settings.value("password").toByteArray(),
             this->m_password);
         if (ret == false) {
@@ -193,7 +214,7 @@ int StoredServer::load(QString& name)
     }
 
     QString str;
-    ret = CryptData::decode(this->m_servername,
+    ret = CryptData::decode(this->m_server_gateway,
         settings.value("client-key").toByteArray(), str);
     if (ret == false) {
         m_last_err = "decoding of client keyfailed";
@@ -203,14 +224,14 @@ int StoredServer::load(QString& name)
     if (is_url(str) == true) {
         this->m_client.key.import_file(str);
     } else {
-        data = str.toLatin1();
+        data = str.toUtf8();
         this->m_client.key.import_pem(data);
     }
 
-    this->m_server_hash = settings.value("server-hash").toByteArray();
-    this->m_server_hash_algo = settings.value("server-hash-algo").toInt();
+    this->m_server_pin = settings.value("server-hash").toByteArray();
+    this->m_server_pin_algo = settings.value("server-hash-algo").toInt();
 
-    ret = CryptData::decode(this->m_servername,
+    ret = CryptData::decode(this->m_server_gateway,
         settings.value("token-str").toByteArray(),
         this->m_token_string);
     if (ret == false) {
@@ -220,8 +241,18 @@ int StoredServer::load(QString& name)
 
     this->m_token_type = settings.value("token-type").toInt();
 
-    m_protocol_id = settings.value("protocol-id", 0).toInt();
     m_protocol_name = settings.value("protocol-name").toString();
+
+    m_interface_name = settings.value("interface-name").toString();
+#ifdef _WIN32
+    /* truncate interface name to OC_IFNAME_MAX_LENGTH in case it was saved by a previous version
+     * that did not impose the length constraint in the text edit
+     */
+    m_interface_name.truncate(OC_IFNAME_MAX_LENGTH);
+#endif
+    m_vpnc_script_filename = settings.value("vpnc-script").toString();
+
+    m_log_level = settings.value("log-level", -1).toInt();
 
     settings.endGroup();
     return rval;
@@ -229,9 +260,18 @@ int StoredServer::load(QString& name)
 
 int StoredServer::save()
 {
-    QSettings settings;
+    QByteArray encoded_password;
+    if (m_batch_mode && !m_password.isEmpty()) {
+        encoded_password = CryptData::encode(m_server_gateway, m_password);
+        if (encoded_password.isEmpty()) {
+            m_last_err = "Could not encrypt the password; the profile was not saved";
+            return -1;
+        }
+    }
+
+    OcSettings settings;
     settings.beginGroup(PREFIX + this->m_label);
-    settings.setValue("server", this->m_servername);
+    settings.setValue("server", this->m_server_gateway);
     settings.setValue("batch", this->m_batch_mode);
     settings.setValue("proxy", this->m_proxy);
     settings.setValue("disable-udp", this->m_disable_udp);
@@ -241,9 +281,14 @@ int StoredServer::save()
     settings.setValue("username", this->m_username);
 
     if (this->m_batch_mode == true) {
-        settings.setValue("password",
-            CryptData::encode(this->m_servername, this->m_password));
+        if (encoded_password.isEmpty())
+            settings.remove("password");
+        else
+            settings.setValue("password", encoded_password);
         settings.setValue("groupname", this->m_groupname);
+    } else {
+        settings.remove("password");
+        settings.remove("groupname");
     }
 
     QByteArray data;
@@ -255,17 +300,23 @@ int StoredServer::save()
 
     this->m_client.key_export(data);
     QString str = QString::fromLatin1(data);
-    settings.setValue("client-key", CryptData::encode(this->m_servername, str));
+    settings.setValue("client-key", CryptData::encode(this->m_server_gateway, str));
 
-    settings.setValue("server-hash", this->m_server_hash);
-    settings.setValue("server-hash-algo", this->m_server_hash_algo);
+    settings.setValue("server-hash", this->m_server_pin);
+    settings.setValue("server-hash-algo", this->m_server_pin_algo);
 
     settings.setValue("token-str",
-        CryptData::encode(this->m_servername, this->m_token_string));
+        CryptData::encode(this->m_server_gateway, this->m_token_string));
     settings.setValue("token-type", this->m_token_type);
 
-    settings.setValue("protocol-id", m_protocol_id);
     settings.setValue("protocol-name", m_protocol_name);
+
+    settings.setValue("interface-name", m_interface_name);
+    settings.setValue("vpnc-script", m_vpnc_script_filename);
+    if (m_log_level == -1)
+        settings.remove("log-level");
+    else
+        settings.setValue("log-level", m_log_level);
 
     settings.endGroup();
     return 0;
@@ -286,9 +337,9 @@ const QString& StoredServer::get_groupname() const
     return this->m_groupname;
 }
 
-const QString& StoredServer::get_servername() const
+const QString& StoredServer::get_server_gateway() const
 {
-    return this->m_servername;
+    return this->m_server_gateway;
 }
 
 const QString& StoredServer::get_label() const
@@ -311,9 +362,9 @@ void StoredServer::set_groupname(const QString& groupname)
     this->m_groupname = groupname;
 }
 
-void StoredServer::set_servername(const QString& servername)
+void StoredServer::set_server_gateway(const QString& server_gateway)
 {
-    this->m_servername = servername;
+    this->m_server_gateway = server_gateway;
 }
 
 void StoredServer::set_label(const QString& label)
@@ -331,14 +382,14 @@ bool StoredServer::get_disable_udp() const
     return this->m_disable_udp;
 }
 
-QString StoredServer::get_client_cert_hash()
+QString StoredServer::get_client_cert_pin()
 {
-    return m_client.cert.sha1_hash();
+    return m_client.cert.cert_pin();
 }
 
-QString StoredServer::get_ca_cert_hash()
+QString StoredServer::get_ca_cert_pin()
 {
-    return m_ca_cert.sha1_hash();
+    return m_ca_cert.cert_pin();
 }
 
 void StoredServer::set_window(QWidget* w)
@@ -421,20 +472,9 @@ void StoredServer::set_token_type(const int type)
     this->m_token_type = type;
 }
 
-int StoredServer::get_protocol_id() const
+const QString& StoredServer::get_protocol_name() const
 {
-    return m_protocol_id;
-}
-
-void StoredServer::set_protocol_id(const int id)
-{
-    m_protocol_id = id;
-}
-
-const char* StoredServer::get_protocol_name() const
-{
-    QByteArray data{ m_protocol_name.toLatin1() };
-    return data.data();
+    return m_protocol_name;
 }
 
 void StoredServer::set_protocol_name(const QString name)
@@ -442,14 +482,48 @@ void StoredServer::set_protocol_name(const QString name)
     m_protocol_name = name;
 }
 
-void StoredServer::set_server_hash(const unsigned algo, const QByteArray& hash)
+void StoredServer::set_server_pin(const unsigned algo, const QByteArray& hash)
 {
-    this->m_server_hash_algo = algo;
-    this->m_server_hash = hash;
+    this->m_server_pin_algo = algo;
+    if (algo != GNUTLS_DIG_SHA256) {
+        throw std::runtime_error("sha256 is the expected certificate algorithm pin");
+    }
+    this->m_server_pin = hash;
 }
 
-unsigned StoredServer::get_server_hash(QByteArray& hash) const
+unsigned StoredServer::get_server_pin(QByteArray& hash) const
 {
-    hash = this->m_server_hash;
-    return this->m_server_hash_algo;
+    hash = this->m_server_pin;
+    return this->m_server_pin_algo;
 }
+
+const QString& StoredServer::get_interface_name() const
+{
+    return this->m_interface_name;
+}
+
+void StoredServer::set_interface_name(const QString& interface_name)
+{
+    this->m_interface_name = interface_name;
+}
+
+const QString& StoredServer::get_vpnc_script_filename() const
+{
+    return this->m_vpnc_script_filename;
+}
+
+void StoredServer::set_vpnc_script_filename(const QString& vpnc_script_filename)
+{
+    this->m_vpnc_script_filename = vpnc_script_filename;
+}
+
+int StoredServer::get_log_level()
+{
+    return this->m_log_level;
+}
+
+void StoredServer::set_log_level(const int log_level)
+{
+    this->m_log_level = log_level;
+}
+

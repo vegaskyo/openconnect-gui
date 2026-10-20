@@ -70,7 +70,7 @@ static int import_Key(QWidget* w, gnutls_x509_privkey_t* privkey,
         }
 
         ret = gnutls_x509_privkey_import2(*privkey, raw, GNUTLS_X509_FMT_PEM,
-            text.toLatin1().data(), 0);
+            text.toUtf8().data(), 0);
     }
 
     if (ret == GNUTLS_E_BASE64_DECODING_ERROR || ret == GNUTLS_E_BASE64_UNEXPECTED_HEADER_ERROR) {
@@ -123,7 +123,7 @@ int Key::data_export(QByteArray& data)
     data.clear();
     if (this->url.isEmpty() == false) {
         /* export the URL */
-        data.append(this->url);
+        data.append(this->url.toUtf8());
         return 0;
     }
 
@@ -158,7 +158,7 @@ int Key::import_file(const QString& File)
     }
 
     /* normal file */
-    int ret = gnutls_load_file(File.toLatin1().data(), &contents);
+    int ret = gnutls_load_file(File.toUtf8().data(), &contents);
     if (ret < 0) {
         this->last_err = gnutls_strerror(ret);
         return -1;
@@ -188,7 +188,7 @@ int Key::tmpfile_export(QString& filename)
 
     tmpfile.resize(0);
     filename = TMP_KEY_PREFIX;
-    tmpfile.setFileTemplate(filename);
+    tmpfile.setFileTemplate(QDir::tempPath() + filename);
 
     gnutls_datum_t out;
     int ret = gnutls_x509_privkey_export2(this->privkey, GNUTLS_X509_FMT_PEM, &out);
@@ -201,7 +201,11 @@ int Key::tmpfile_export(QString& filename)
     qa.append((const char*)out.data, out.size);
     gnutls_free(out.data);
 
-    tmpfile.open();
+    bool opened = tmpfile.open();
+    if (!opened) {
+        return -1;
+    }
+
     ret = tmpfile.write(qa);
     tmpfile.close();
     if (ret == -1) {

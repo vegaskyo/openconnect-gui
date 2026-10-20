@@ -20,6 +20,7 @@
 #pragma once
 
 #include <QTemporaryFile>
+#include <QDir>
 extern "C" {
 #include <gnutls/x509.h>
 }
@@ -35,7 +36,7 @@ public:
     void set(gnutls_x509_crt_t crt);
     int data_export(QByteArray& data);
     int tmpfile_export(QString& File);
-    QString sha1_hash();
+    QString cert_pin();
 
     bool is_ok() const;
     void clear();

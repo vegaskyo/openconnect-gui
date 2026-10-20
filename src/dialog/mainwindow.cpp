@@ -27,7 +27,6 @@
 #include "timestamp.h"
 #include "ui_mainwindow.h"
 #include "vpninfo.h"
-
 #include "logger.h"
 
 extern "C" {
@@ -44,14 +43,19 @@ extern "C" {
 #include <QFutureWatcher>
 #include <QLineEdit>
 #include <QMessageBox>
-#include <QSettings>
+#include <OcSettings.h>
 #include <QSignalTransition>
 #include <QStateMachine>
 #include <QUrl>
+#include <QTimer>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QNetworkProxyFactory>
 #include <QtNetwork/QNetworkProxyQuery>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QNetworkAccessManager>
+#include <QProgressDialog>
 
 #include <cmath>
 #include <cstdarg>
@@ -63,7 +67,33 @@ extern "C" {
 #define pipe_write(x, y, z) write(x, y, z)
 #endif
 
-MainWindow::MainWindow(QWidget* parent, const QString profileName)
+static int app_loglevel_tab(int mode)
+{
+    // keep in sync with the order of the QAction items in src/dialog/mainwindow.ui
+    switch (mode) {
+    case PRG_ERR:
+        return 0;
+    case PRG_INFO:
+        return 1;
+    case PRG_DEBUG:
+        return 2;
+    case PRG_TRACE:
+        return 3;
+    default:
+        return -1;
+    }
+}
+
+static int app_loglevel_rtab[] = {
+    // keep in sync with the order of the QAction items in src/dialog/mainwindow.ui
+    PRG_ERR,   // [0]
+    PRG_INFO,  // [1]
+    PRG_DEBUG, // [2]
+    PRG_TRACE  // [3]
+};
+
+
+MainWindow::MainWindow(QWidget* parent, bool useTray, const QString profileName)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
@@ -76,9 +106,12 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
     blink_timer = new QTimer(this);
     this->cmd_fd = INVALID_SOCKET;
 
+    downloadProgress = nullptr;
+    manager = new QNetworkAccessManager();
+
     connect(ui->actionQuit, &QAction::triggered,
         [=]() {
-            if (m_disconnectAction->isEnabled()) {
+            if (m_trayIcon && m_disconnectAction->isEnabled()) {
                 connect(this, &MainWindow::readyToShutdown,
                     qApp, &QApplication::quit);
                 on_disconnectClicked();
@@ -93,6 +126,9 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
     connect(timer, &QTimer::timeout,
         this, &MainWindow::request_update_stats,
         Qt::QueuedConnection);
+    connect(ui->serverList->lineEdit(), &QLineEdit::returnPressed,
+        this, &MainWindow::on_connectClicked,
+        Qt::QueuedConnection);
     connect(this, &MainWindow::vpn_status_changed_sig,
         this, &MainWindow::changeStatus,
         Qt::QueuedConnection);
@@ -105,8 +141,9 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
 
     ui->iconLabel->setPixmap(OFF_ICON);
     QNetworkProxyFactory::setUseSystemConfiguration(true);
+    last_check_time = 0;
 
-    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+    if (useTray) {
         createTrayIcon();
 
         connect(m_trayIcon, &QSystemTrayIcon::activated,
@@ -126,13 +163,15 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
     QStateMachine* machine = new QStateMachine(this);
     QState* s1_noProfiles = new QState();
     s1_noProfiles->assignProperty(ui->connectionButton, "enabled", false);
-    s1_noProfiles->assignProperty(ui->serverList, "enabled", false);
+    s1_noProfiles->assignProperty(ui->serverList, "enabled", true);
     s1_noProfiles->assignProperty(ui->actionEditSelectedProfile, "enabled", false);
     s1_noProfiles->assignProperty(ui->actionRemoveSelectedProfile, "enabled", false);
 
-    s1_noProfiles->assignProperty(m_trayIconMenuConnections, "title", tr("(no servers to connect)"));
-    s1_noProfiles->assignProperty(m_trayIconMenuConnections, "enabled", false);
-    s1_noProfiles->assignProperty(m_disconnectAction, "enabled", false);
+    if (m_trayIcon) {
+        s1_noProfiles->assignProperty(m_trayIconMenuConnections, "title", tr("(no servers to connect)"));
+        s1_noProfiles->assignProperty(m_trayIconMenuConnections, "enabled", false);
+        s1_noProfiles->assignProperty(m_disconnectAction, "enabled", false);
+    }
     machine->addState(s1_noProfiles);
 
     QState* s2_connectionReady = new QState();
@@ -141,8 +180,10 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
     s2_connectionReady->assignProperty(ui->actionEditSelectedProfile, "enabled", true);
     s2_connectionReady->assignProperty(ui->actionRemoveSelectedProfile, "enabled", true);
 
-    s2_connectionReady->assignProperty(m_trayIconMenuConnections, "title", tr("Connect to..."));
-    s2_connectionReady->assignProperty(m_trayIconMenuConnections, "enabled", true);
+    if (m_trayIcon) {
+        s2_connectionReady->assignProperty(m_trayIconMenuConnections, "title", tr("Connect to..."));
+        s2_connectionReady->assignProperty(m_trayIconMenuConnections, "enabled", true);
+    }
     machine->addState(s2_connectionReady);
 
     class ServerListTransition : public QSignalTransition {
@@ -192,11 +233,11 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
             } else {
                 QMessageBox::warning(this,
                     tr("Connection failed"),
-                    tr("Selected VPN profile '<b>%1</b>' does not exists.").arg(profileName));
+                    tr("Selected VPN profile '<b>%1</b>' does not exist.").arg(profileName));
             }
         }
 
-        QSettings settings;
+        OcSettings settings;
         const int currentIndex = settings.value("Profiles/currentIndex", -1).toInt();
         if (currentIndex != -1 && currentIndex < ui->serverList->count()) {
             ui->serverList->setCurrentIndex(currentIndex);
@@ -307,6 +348,9 @@ MainWindow::MainWindow(QWidget* parent, const QString profileName)
     restoreEvent->setTargetState(s111_normalWindow);
     s112_minimizedWindow->addTransition(restoreEvent);
 
+    // start timer to check latest version
+    QTimer::singleShot(4000, this, &MainWindow::tryCheckLatestVersion);
+
     m_appWindowStateMachine->start();
 }
 
@@ -318,7 +362,7 @@ static void term_thread(MainWindow* m, SOCKET* fd)
         m->vpn_status_changed(STATUS_DISCONNECTING);
         int ret = pipe_write(*fd, &cmd, 1);
         if (ret < 0) {
-            Logger::instance().addMessage(QObject::tr("term_thread: IPC error: ") + QString::number(net_errno));
+            Logger::instance().addMessage(QObject::tr("term_thread: IPC error: %1").arg(net_errno));
         }
         *fd = INVALID_SOCKET;
         ms_sleep(200);
@@ -347,6 +391,67 @@ MainWindow::~MainWindow()
     delete ui;
     delete timer;
     delete blink_timer;
+    delete manager;
+}
+
+void MainWindow::checkLatestVersion() const
+{
+    QNetworkRequest req(QUrl(GITLAB_LATEST_RELEASE_URL));
+
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+
+    connect(manager, &QNetworkAccessManager::finished,
+            this, &MainWindow::gotLatestVersion);
+
+    Logger::instance().addMessage(QObject::tr("Checking for current version"));
+    manager->get(req);
+}
+
+void MainWindow::tryCheckLatestVersion()
+{
+    time_t now = time(0);
+
+    // Check during start up only a time every a few days to avoid
+    // overloading gitlab.
+    if (last_check_time == 0) {
+        OcSettings settings;
+        last_check_time = settings.value("Settings/last-check-time").toLongLong();
+    }
+
+    if (now - last_check_time < 5*86400) {
+        Logger::instance().addMessage(QObject::tr("Skipping automatic check for current version"));
+        return;
+    }
+
+    checkLatestVersion();
+}
+
+void MainWindow::gotLatestVersion(QNetworkReply *reply)
+{
+    QString version;
+    version = reply->rawHeader("Location");
+
+    Logger::instance().addMessage(QObject::tr("Version location: %1").arg(version));
+
+    if (version.isEmpty() != true) {
+        qsizetype n=version.lastIndexOf("/");
+        if (n != -1) {
+            // skip '/v'
+            this->latest_version = version.mid(n+2);
+            Logger::instance().addMessage(QObject::tr("Latest available version is %1, current %2").arg(this->latest_version).arg(INTERNAL_PROJECT_VERSION));
+
+            if (m_trayIcon && m_trayIcon->supportsMessages() && latest_version.compare(INTERNAL_PROJECT_VERSION) != 0) {
+                m_trayIcon->showMessage(tr("New version available"), tr("%1 version %2 is available!").arg(QLatin1String(PRODUCT_NAME_SHORT)).arg(this->latest_version));
+            }
+        } else {
+            Logger::instance().addMessage(QObject::tr("Unable to identify current version from %1").arg(version));
+        }
+    } else {
+        Logger::instance().addMessage(QObject::tr("Unable to identify current version: %1").arg(reply->errorString()));
+    }
+
+    emit version_download_completed_sig();
+    reply->deleteLater();
 }
 
 void MainWindow::vpn_status_changed(int connected)
@@ -391,13 +496,15 @@ void MainWindow::updateStats(const struct oc_stats* stats, QString dtls)
         dtls);
 }
 
-#define PREFIX "server:" // LCA: remot this...
+#define PREFIX "server:" // LCA: remove this...
 void MainWindow::reload_settings()
 {
     ui->serverList->clear();
-    m_trayIconMenuConnections->clear();
+    if (m_trayIcon) {
+        m_trayIconMenuConnections->clear();
+    }
 
-    QSettings settings;
+    OcSettings settings;
     for (const auto& key : settings.allKeys()) {
         if (key.startsWith(PREFIX) && key.endsWith("/server")) {
             QString str{ key };
@@ -405,14 +512,16 @@ void MainWindow::reload_settings()
             str.remove(str.size() - 7, 7); /* remove /server suffix */
             ui->serverList->addItem(str);
 
-            QAction* act = m_trayIconMenuConnections->addAction(str);
-            connect(act, &QAction::triggered, [act, this]() {
-                int idx = ui->serverList->findText(act->text());
-                if (idx != -1) {
-                    ui->serverList->setCurrentIndex(idx);
-                    on_connectClicked();
-                }
-            });
+            if (m_trayIcon) {
+                QAction* act = m_trayIconMenuConnections->addAction(str);
+                connect(act, &QAction::triggered, [act, this]() {
+                    int idx = ui->serverList->findText(act->text());
+                    if (idx != -1) {
+                        ui->serverList->setCurrentIndex(idx);
+                        on_connectClicked();
+                    }
+                });
+            }
         }
     }
 }
@@ -437,17 +546,21 @@ void MainWindow::changeStatus(int val)
 
         ui->serverList->setEnabled(false);
 
-        m_trayIconMenuConnections->setEnabled(false);
-        m_disconnectAction->setEnabled(true);
+        if (m_trayIcon) {
+            m_trayIconMenuConnections->setEnabled(false);
+            m_disconnectAction->setEnabled(true);
+        }
 
         ui->iconLabel->setPixmap(ON_ICON);
         ui->connectionButton->setIcon(QIcon(":/images/process-stop.png"));
         ui->connectionButton->setText(tr("Disconnect"));
 
         QFileSelector selector;
-        QIcon icon(selector.select(QStringLiteral(":/images/network-connected.png")));
-        icon.setIsMask(true);
-        m_trayIcon->setIcon(icon);
+        if (m_trayIcon) {
+            QIcon icon(selector.select(QStringLiteral(":/images/network-connected.png")));
+            icon.setIsMask(true);
+            m_trayIcon->setIcon(icon);
+        }
 
         this->ui->ipV4Label->setText(ip);
         this->ui->ipV6Label->setText(ip6);
@@ -460,12 +573,16 @@ void MainWindow::changeStatus(int val)
         if (this->minimize_on_connect) {
             if (m_trayIcon) {
                 hide();
-                m_trayIcon->showMessage(QLatin1String("Connected"), QLatin1String("You were connected to ") + ui->serverList->currentText(),
+                m_trayIcon->showMessage(QLatin1String("Connected"), QLatin1String("You are connected to ") + ui->serverList->currentText(),
                     QSystemTrayIcon::Information,
                     10000);
             } else {
                 this->setWindowState(Qt::WindowMinimized);
             }
+        }
+
+        if (m_trayIcon) {
+            m_trayIcon->setToolTip(QLatin1String("Connected to ") + ui->serverList->currentText());
         }
     } else if (val == STATUS_CONNECTING) {
 
@@ -474,12 +591,15 @@ void MainWindow::changeStatus(int val)
             QIcon icon(selector.select(QStringLiteral(":/images/network-disconnected.png")));
             icon.setIsMask(true);
             m_trayIcon->setIcon(icon);
+            m_trayIcon->setToolTip(QLatin1String("Connecting to ") + ui->serverList->currentText());
         }
 
         ui->serverList->setEnabled(false);
 
-        m_trayIconMenuConnections->setEnabled(false);
-        m_disconnectAction->setEnabled(true);
+        if (m_trayIcon) {
+            m_trayIconMenuConnections->setEnabled(false);
+            m_disconnectAction->setEnabled(true);
+        }
 
         ui->iconLabel->setPixmap(CONNECTING_ICON);
         ui->connectionButton->setIcon(QIcon(":/images/process-stop.png"));
@@ -509,8 +629,10 @@ void MainWindow::changeStatus(int val)
 
         ui->serverList->setEnabled(true);
 
-        m_trayIconMenuConnections->setEnabled(true);
-        m_disconnectAction->setEnabled(false);
+        if (m_trayIcon) {
+            m_trayIconMenuConnections->setEnabled(true);
+            m_disconnectAction->setEnabled(false);
+        }
 
         ui->iconLabel->setPixmap(OFF_ICON);
         ui->connectionButton->setEnabled(true);
@@ -527,6 +649,8 @@ void MainWindow::changeStatus(int val)
                 m_trayIcon->showMessage(QLatin1String("Disconnected"), QLatin1String("You were disconnected from the VPN"),
                     QSystemTrayIcon::Warning,
                     10000);
+
+            m_trayIcon->setToolTip(QLatin1String("Disconnected"));
         }
         disconnect(ui->connectionButton, &QPushButton::clicked,
             this, &MainWindow::on_disconnectClicked);
@@ -540,6 +664,9 @@ void MainWindow::changeStatus(int val)
         ui->connectionButton->setIcon(QIcon(":/images/process-stop.png"));
         ui->connectionButton->setEnabled(false);
         blink_timer->start(1500);
+
+        if (m_trayIcon)
+            m_trayIcon->setToolTip(QLatin1String("Disconnecting from ") + ui->serverList->currentText());
     } else {
         qDebug() << "TODO: was is das?";
     }
@@ -550,6 +677,7 @@ static void main_loop(VpnInfo* vpninfo, MainWindow* m)
     m->vpn_status_changed(STATUS_CONNECTING);
 
     bool pass_was_empty;
+    bool reset_password = false;
     pass_was_empty = vpninfo->ss->get_password().isEmpty();
 
     QString ip, ip6, dns, cstp, dtls;
@@ -565,7 +693,6 @@ static void main_loop(VpnInfo* vpninfo, MainWindow* m)
                 goto fail;
 
             QString oldpass, oldgroup;
-            bool reset_password = false;
             if (pass_was_empty != true) {
                 /* authentication failed in batch mode? switch to non
                  * batch and retry */
@@ -593,16 +720,13 @@ static void main_loop(VpnInfo* vpninfo, MainWindow* m)
 
     } while (retry == true);
 
-    ret = vpninfo->dtls_connect();
-    if (ret != 0) {
-        Logger::instance().addMessage(vpninfo->last_err);
-    }
-
     vpninfo->get_info(dns, ip, ip6);
     vpninfo->get_cipher_info(cstp, dtls);
     m->vpn_status_changed(STATUS_CONNECTED, dns, ip, ip6, cstp, dtls);
 
-    vpninfo->ss->save();
+    if (vpninfo->ss->save() != 0) {
+        Logger::instance().addMessage(QObject::tr("Could not save profile: %1").arg(vpninfo->ss->m_last_err));
+    }
     vpninfo->mainloop();
 
 fail: // LCA: drop this 'goto' and optimize values...
@@ -623,12 +747,13 @@ void MainWindow::on_disconnectClicked()
 void MainWindow::on_connectClicked()
 {
     VpnInfo* vpninfo = nullptr;
-    StoredServer* ss = new StoredServer();
+    StoredServer* ss = nullptr;
     QFuture<void> future;
     QString name, url;
     QList<QNetworkProxy> proxies;
     QUrl turl;
     QNetworkProxyQuery query;
+    int rval;
 
     if (this->cmd_fd != INVALID_SOCKET) {
         QMessageBox::information(this,
@@ -651,24 +776,67 @@ void MainWindow::on_connectClicked()
         return;
     }
 
+    ss = new StoredServer();
+
     name = ui->serverList->currentText();
-    ss->load(name);
-    turl.setUrl("https://" + ss->get_servername());
+    rval = ss->load(name);
+    if (rval == 0) { // new entry
+        // remove http?:// from string
+        if (name.contains("/")) {
+            turl = QUrl::fromUserInput(name);
+            name = NewProfileDialog::urlToName(turl);
+        } else {
+            turl = QUrl::fromUserInput("https://" + name);
+        }
+
+        if (turl.isValid() == false) {
+            delete ss;
+            goto fail;
+        }
+
+        if (rval == 0) { // if a new server ask and set the protocol
+            NewProfileDialog dialog(this);
+
+            dialog.setUrl(turl);
+            dialog.setQuickConnect();
+            if (dialog.exec() != QDialog::Accepted) {
+                delete ss;
+                return;
+            }
+            //dialog saves the host, so we load again
+            name = dialog.getNewProfileName();
+            ss->load(name);
+        }
+
+        if (name.compare(ui->serverList->currentText()) != 0) {
+            // user typed https:// to a new entry. Replace the text of it
+            // with the actual name.
+            ui->serverList->setItemText(ui->serverList->currentIndex(), name);
+        }
+    } else {
+        name = ss->get_server_gateway();
+        if (name.contains("https://", Qt::CaseInsensitive)) {
+            turl.setUrl(ss->get_server_gateway());
+        } else {
+            turl.setUrl("https://" + ss->get_server_gateway());
+        }
+    }
+
     query.setUrl(turl);
 
     /* ss is now deallocated by vpninfo */
     try {
-        vpninfo = new VpnInfo(QStringLiteral("Open AnyConnect VPN Agent"), ss, this);
+        vpninfo = new VpnInfo(QStringLiteral("AnyConnect-compatible OpenConnect GUI VPN Agent"), ss, this);
     } catch (std::exception& ex) {
         QMessageBox::information(this,
             qApp->applicationName(),
-            tr("There was an issue initializing the VPN ") + "(" + ex.what() + ").");
+            tr("There was an issue initializing the VPN (%1).").arg(ex.what()));
         goto fail;
     }
 
     this->minimize_on_connect = vpninfo->get_minimize();
 
-    vpninfo->parse_url(ss->get_servername().toLocal8Bit().data());
+    vpninfo->setUrl(turl);
 
     this->cmd_fd = vpninfo->get_cmd_fd();
     if (this->cmd_fd == INVALID_SOCKET) {
@@ -690,16 +858,20 @@ void MainWindow::on_connectClicked()
             if (url.isEmpty() == false) {
 
                 QString str;
-                if (proxies.at(0).user() != 0) {
+                if (proxies.at(0).user().isEmpty() != true) {
                     str = proxies.at(0).user() + ":" + proxies.at(0).password() + "@";
                 }
                 str += proxies.at(0).hostName();
                 if (proxies.at(0).port() != 0) {
                     str += ":" + QString::number(proxies.at(0).port());
                 }
-                Logger::instance().addMessage(tr("Setting proxy to: ") + str);
-                // FIXME: ...
-                int ret = openconnect_set_http_proxy(vpninfo->vpninfo, str.toLatin1().data());
+
+                Logger::instance().addMessage(tr("Setting proxy to: %1").arg(str));
+
+                int ret = openconnect_set_http_proxy(vpninfo->vpninfo, str.toUtf8().data());
+                if (ret != 0) {
+                    Logger::instance().addMessage(tr("Unexpected error setting proxy"));
+                }
             }
         }
     }
@@ -710,9 +882,7 @@ void MainWindow::on_connectClicked()
 
     return;
 fail: // LCA: remote 'fail' label :/
-    if (vpninfo != nullptr)
-        delete vpninfo;
-    return;
+    delete vpninfo;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -723,7 +893,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     } else {
         event->accept();
 
-        if (m_disconnectAction->isEnabled()) {
+        if (m_trayIcon && m_disconnectAction->isEnabled()) {
             connect(this, &MainWindow::readyToShutdown,
                 qApp, &QApplication::quit);
             on_disconnectClicked();
@@ -740,7 +910,7 @@ void MainWindow::request_update_stats()
     if (this->cmd_fd != INVALID_SOCKET) {
         int ret = pipe_write(this->cmd_fd, &cmd, 1);
         if (ret < 0) {
-            Logger::instance().addMessage(QObject::tr("update_stats: IPC error: ") + QString::number(net_errno));
+            Logger::instance().addMessage(QObject::tr("update_stats: IPC error: %1").arg(net_errno));
             if (this->timer->isActive())
                 this->timer->stop();
         }
@@ -753,11 +923,18 @@ void MainWindow::request_update_stats()
 
 void MainWindow::readSettings()
 {
-    QSettings settings;
+    OcSettings settings;
     settings.beginGroup("MainWindow");
-    resize(settings.value("size").toSize());
+    if (settings.contains("geometry")) {
+        restoreGeometry(settings.value("geometry").toByteArray());
+    }
+
+    //remove old settings if they exist
+    if (settings.contains("size")) {
+        settings.remove("size");
+    }
     if (settings.contains("pos")) {
-        move(settings.value("pos").toPoint());
+        settings.remove("pos");
     }
     settings.endGroup();
 
@@ -765,27 +942,39 @@ void MainWindow::readSettings()
     ui->actionMinimizeToTheNotificationArea->setChecked(settings.value("minimizeToTheNotificationArea", true).toBool());
     ui->actionMinimizeTheApplicationInsteadOfClosing->setChecked(settings.value("minimizeTheApplicationInsteadOfClosing", true).toBool());
     ui->actionStartMinimized->setChecked(settings.value("startMinimized", false).toBool());
+
     ui->actionSingleInstanceMode->setChecked(settings.value("singleInstanceMode", true).toBool());
     connect(ui->actionSingleInstanceMode, &QAction::toggled, [](bool checked) {
-        QSettings settings;
+        OcSettings settings;
         settings.setValue("Settings/singleInstanceMode", checked);
     });
+
+    int loglevel = settings.value("logLevel", PRG_INFO).toInt();
+    int action_idx = app_loglevel_tab(loglevel);
+
+    if (action_idx == -1 )
+        action_idx = app_loglevel_tab(PRG_INFO); //fallback to default
+
+    ui->LogLevelGroup->actions().at(action_idx)->setChecked(true);
+
     settings.endGroup();
 }
 
 void MainWindow::writeSettings()
 {
-    QSettings settings;
+    OcSettings settings;
     settings.beginGroup("MainWindow");
-    settings.setValue("size", size());
-    settings.setValue("pos", pos());
+    settings.setValue("geometry", saveGeometry());
     settings.endGroup();
 
     settings.beginGroup("Settings");
+    if (last_check_time > 0)
+        settings.setValue("last-check-time", qint64(last_check_time));
     settings.setValue("minimizeToTheNotificationArea", ui->actionMinimizeToTheNotificationArea->isChecked());
     settings.setValue("minimizeTheApplicationInsteadOfClosing", ui->actionMinimizeTheApplicationInsteadOfClosing->isChecked());
     settings.setValue("startMinimized", ui->actionStartMinimized->isChecked());
     settings.setValue("singleInstanceMode", ui->actionSingleInstanceMode->isChecked());
+    settings.setValue("logLevel", this->get_log_level());
     settings.endGroup();
 
     settings.setValue("Profiles/currentIndex", ui->serverList->currentIndex());
@@ -839,6 +1028,7 @@ void MainWindow::createTrayIcon()
 
     m_trayIcon = new QSystemTrayIcon(this);
     m_trayIcon->setContextMenu(m_trayIconMenu);
+    m_trayIcon->setToolTip(QLatin1String("Disconnected"));
 }
 
 void MainWindow::iconActivated(QSystemTrayIcon::ActivationReason reason)
@@ -893,15 +1083,8 @@ void MainWindow::on_actionEditSelectedProfile_triggered()
         return;
     }
 
-    int idx = ui->serverList->currentIndex();
     reload_settings();
-    // TODO: may be signal/slot?
-    if (idx < ui->serverList->maxVisibleItems() && idx >= 0) {
-        ui->serverList->setCurrentIndex(idx);
-    } else if (ui->serverList->maxVisibleItems() == 0) {
-        ui->serverList->setCurrentIndex(0);
-    }
-    // LCA: else ???
+    ui->serverList->setCurrentText(dialog.getEditedProfileName());
 }
 
 #define PREFIX "server:" // LCA: remote this...
@@ -911,9 +1094,10 @@ void MainWindow::on_actionRemoveSelectedProfile_triggered()
     mbox.setText(tr("Are you sure you want to remove '%1' host?").arg(ui->serverList->currentText()));
     mbox.setStandardButtons(QMessageBox::Cancel | QMessageBox::Ok);
     mbox.setDefaultButton(QMessageBox::Cancel);
-    mbox.setButtonText(QMessageBox::Ok, tr("Remove"));
+    mbox.addButton(tr("Remove"), QMessageBox::DestructiveRole);
+
     if (mbox.exec() == QMessageBox::Ok) {
-        QSettings settings;
+        OcSettings settings;
         QString prefix = PREFIX;
         for (const auto& key : settings.allKeys()) {
             //qDebug() << key << ":" << QString(prefix + ui->serverList->currentText());
@@ -928,29 +1112,139 @@ void MainWindow::on_actionRemoveSelectedProfile_triggered()
 
 void MainWindow::on_actionAbout_triggered()
 {
-    QString txt = QLatin1String("<h2>") + QLatin1String(appDescriptionLong) + QLatin1String("</h2>");
-    txt += tr("Version <i>%1</i> (%2 bit)").arg(appVersion).arg(QSysInfo::buildCpuArchitecture() == QLatin1String("i386") ? 32 : 64);
-    txt += tr("<br><br>Build on ") + QLatin1String("<i>") + QLatin1String(appBuildOn) + QLatin1String("</i>");
-    txt += tr("<br>Based on");
+    QString txt = QLatin1String("<h2>") + QLatin1String(PRODUCT_NAME_LONG) + QLatin1String("</h2>");
+
+    if (QLatin1String(PROJECT_VERSION).contains(QLatin1String("-g"))) {
+        txt += tr("Development snapshot <i>%1</i> (%2 bit)<br>").arg(PROJECT_VERSION).arg(QSysInfo::buildCpuArchitecture() == QLatin1String("i386") ? 32 : 64);
+        txt += tr("Built at <i>%1</i><br>").arg(QLatin1String(appBuildOn));
+    } else {
+        txt += tr("Version <i>%1</i> (%2 bit)<br>").arg(PROJECT_VERSION).arg(QSysInfo::buildCpuArchitecture() == QLatin1String("i386") ? 32 : 64);
+    }
+
+    txt += tr("<br><i>%1</i> is free software developed by the OpenConnect GUI project community. See the license for more information.<br>").arg(APP_NAME);
+
+    txt += tr("<br>Visit <a href=\"%1\">our community web site</a> for more information, to contribute, file a bug or suggest a new feature.<br>").arg(CMAKE_PROJECT_HOMEPAGE_URL);
+
+    QMessageBox::about(this, QLatin1String("About"), txt);
+}
+
+void MainWindow::checkForUpdatesDialog()
+{
+    if (downloadProgress != nullptr) {
+        disconnect(this, &MainWindow::version_download_completed_sig,
+                   this, &MainWindow::checkForUpdatesDialog);
+        this->downloadProgress->setValue(100);
+        downloadProgress->done(0);
+        delete downloadProgress;
+        downloadProgress = nullptr;
+    }
+
+
+    QMessageBox mbox;
+    QUrl getUri;
+    mbox.setStandardButtons(QMessageBox::Ok);
+    mbox.setDefaultButton(QMessageBox::Ok);
+    QString txt = QLatin1String("<h2>") + QLatin1String(PRODUCT_NAME_LONG) + QLatin1String("</h2>");
+
+    txt += tr("<h3>Current version</h3>");
+    if (QLatin1String(PROJECT_VERSION).contains(QLatin1String("-g"))) {
+        txt += tr("Development snapshot <i>%1</i> (%2 bit)<br>").arg(PROJECT_VERSION).arg(QSysInfo::buildCpuArchitecture() == QLatin1String("i386") ? 32 : 64);
+        txt += tr("Built at <i>%1</i><br>").arg(QLatin1String(appBuildOn));
+    } else {
+        txt += tr("Version <i>%1</i> (%2 bit)<br>").arg(PROJECT_VERSION).arg(QSysInfo::buildCpuArchitecture() == QLatin1String("i386") ? 32 : 64);
+    }
+
+    txt += tr("<h3>Latest version</h3>");
+    if (latest_version.isEmpty()) {
+        txt += tr("N/A<br>");
+    } else {
+        if (latest_version.compare(INTERNAL_PROJECT_VERSION) != 0) {
+            txt += tr("Latest version is <i>%1</i><br><br>").arg(latest_version);
+#ifdef Q_OS_WIN
+            mbox.addButton(tr("Download %1").arg(latest_version), QMessageBox::AcceptRole);
+            getUri = QUrl(tr(APP_DOWNLOAD_WIN_URL).arg(latest_version));
+#else
+            mbox.addButton(tr("Get %1").arg(latest_version), QMessageBox::AcceptRole);
+            getUri = QUrl(APP_RELEASES_URL);
+#endif
+        } else {
+            txt += tr("You are up to date. Latest version is %1.<br>").arg(latest_version);
+        }
+    }
+
+    mbox.setInformativeText(txt);
+    mbox.setWindowTitle(QLatin1String("Check for updates"));
+
+    if (mbox.exec() == QMessageBox::Ok) {
+        return;
+    } else { // Download
+        QDesktopServices::openUrl(getUri);
+    }
+    mbox.close();
+}
+
+void MainWindow::on_actionCheckForUpdates_triggered()
+{
+    // If we haven't checked the version already, force the check
+    if (latest_version.isEmpty() && downloadProgress == nullptr) {
+        const unsigned progress_max_value = 100;
+
+        downloadProgress = new QProgressDialog("Checking for latest version...", "Abort", 0, progress_max_value, this);
+
+        // ensure that this is called when download is complete
+        connect(this, &MainWindow::version_download_completed_sig,
+                this, &MainWindow::checkForUpdatesDialog,
+                Qt::QueuedConnection);
+
+        downloadProgress->setValue(25);
+        checkLatestVersion();
+        downloadProgress->show();
+        downloadProgress->raise();
+        downloadProgress->grabMouse();
+        downloadProgress->grabKeyboard();
+        return;
+    }
+
+
+    checkForUpdatesDialog();
+}
+
+void MainWindow::on_actionLicense_triggered()
+{
+    QString txt = QLatin1String("<h2>") + QLatin1String(PRODUCT_NAME_LONG) + QLatin1String("</h2>");
+
+    txt += tr("<br><br>Based on");
     txt += tr("<br>- <a href=\"https://www.infradead.org/openconnect\">OpenConnect</a> ") + QLatin1String(openconnect_get_version());
     txt += tr("<br>- <a href=\"https://www.gnutls.org\">GnuTLS</a> v") + QLatin1String(gnutls_check_version(nullptr));
     txt += tr("<br>- <a href=\"https://github.com/gabime/spdlog\">spdlog</a> v%1.%2.%3").arg(QString::number(SPDLOG_VER_MAJOR)).arg(QString::number(SPDLOG_VER_MINOR)).arg(QString::number(SPDLOG_VER_PATCH));
     txt += tr("<br>- <a href=\"https://www.qt.io\">Qt</a> v%1").arg(QT_VERSION_STR);
-    txt += tr("<br><br>%1<br>").arg(appCopyright);
+
+    txt += tr("<br><br>%1<br>").arg(PRODUCT_NAME_COPYRIGHT_FULL);
     txt += tr("<br><i>%1</i> comes with ABSOLUTELY NO WARRANTY. This is free software, "
               "and you are welcome to redistribute it under the conditions "
-              "of the GNU General Public License version 2.")
-               .arg(appDescriptionLong);
+              "of the GNU General Public License version 2.<br>")
+               .arg(APP_NAME);
 
-    QMessageBox::about(this, "", txt);
-}
-
-void MainWindow::on_actionAboutQt_triggered()
-{
-    qApp->aboutQt();
+    QMessageBox::information(this, QLatin1String("License"), txt);
 }
 
 void MainWindow::on_actionWebSite_triggered()
 {
-    QDesktopServices::openUrl(QUrl("https://openconnect.github.io/openconnect-gui"));
+    QDesktopServices::openUrl(QUrl(CMAKE_PROJECT_HOMEPAGE_URL));
+}
+
+void MainWindow::on_actionReport_an_issue_triggered()
+{
+    QDesktopServices::openUrl(QUrl(APP_ISSUES_URL));
+}
+
+int MainWindow::get_log_level()
+{
+    int ret = app_loglevel_tab(PRG_INFO);
+    QAction* checked = ui->LogLevelGroup->checkedAction();
+
+    if (checked != nullptr)
+        ret = ui->LogLevelGroup->actions().indexOf(checked);
+
+    return app_loglevel_rtab[ret];
 }

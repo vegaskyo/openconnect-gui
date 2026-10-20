@@ -111,7 +111,11 @@
                </widget>
               </item>
               <item>
-               <widget class="QComboBox" name="serverList"/>
+               <widget class="QComboBox" name="serverList">
+                <property name="editable">
+                 <bool>true</bool>
+                </property>
+               </widget>
               </item>
               <item>
                <widget class="QToolButton" name="serverListControl">
@@ -305,7 +309,7 @@
      <x>0</x>
      <y>0</y>
      <width>436</width>
-     <height>20</height>
+     <height>23</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -330,9 +334,12 @@
      <string>&amp;Help</string>
     </property>
     <addaction name="actionWebSite"/>
+    <addaction name="actionReport_an_issue"/>
+    <addaction name="actionLicense"/>
+    <addaction name="separator"/>
+    <addaction name="actionCheckForUpdates"/>
     <addaction name="separator"/>
     <addaction name="actionAbout"/>
-    <addaction name="actionAboutQt"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -344,12 +351,22 @@
     <property name="title">
      <string>&amp;Settings</string>
     </property>
+    <widget class="QMenu" name="menuLog_Level">
+     <property name="title">
+      <string>Log Level</string>
+     </property>
+     <addaction name="actionError"/>
+     <addaction name="actionInfo"/>
+     <addaction name="actionDebug"/>
+     <addaction name="actionTrace"/>
+    </widget>
     <addaction name="actionMinimizeToTheNotificationArea"/>
     <addaction name="actionMinimizeTheApplicationInsteadOfClosing"/>
     <addaction name="separator"/>
     <addaction name="actionStartMinimized"/>
     <addaction name="separator"/>
     <addaction name="actionSingleInstanceMode"/>
+    <addaction name="menuLog_Level"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuView"/>
@@ -364,6 +381,11 @@
     <string>Ctrl+Q</string>
    </property>
   </action>
+  <action name="actionCheckForUpdates">
+   <property name="text">
+    <string>Check for &amp;Updates</string>
+   </property>
+  </action>
   <action name="actionAbout">
    <property name="text">
     <string>&amp;About</string>
@@ -372,20 +394,12 @@
     <string>Show the application's About info</string>
    </property>
   </action>
-  <action name="actionAboutQt">
-   <property name="text">
-    <string>About &amp;Qt</string>
-   </property>
-   <property name="statusTip">
-    <string>Show the Qt library's About info</string>
-   </property>
-  </action>
   <action name="actionMinimize">
    <property name="text">
     <string>Mi&amp;nimize</string>
    </property>
    <property name="toolTip">
-    <string>Mimimize</string>
+    <string>Minimize</string>
    </property>
   </action>
   <action name="actionRestore">
@@ -476,10 +490,18 @@
   </action>
   <action name="actionWebSite">
    <property name="text">
-    <string>&amp;Web site...</string>
+    <string>&amp;Web site</string>
    </property>
    <property name="statusTip">
-    <string>Open the browser and go to product site</string>
+    <string>Opens the browser and go to OpenConnect VPN site</string>
+   </property>
+  </action>
+  <action name="actionLicense">
+   <property name="text">
+    <string>&amp;License info</string>
+   </property>
+   <property name="statusTip">
+    <string>Information about license and build</string>
    </property>
   </action>
   <action name="actionSingleInstanceMode">
@@ -508,6 +530,45 @@
     <string>Ctrl+Shift+N</string>
    </property>
   </action>
+  <action name="actionReport_an_issue">
+   <property name="text">
+    <string>Report an issue</string>
+   </property>
+  </action>
+  <actiongroup name="LogLevelGroup">
+   <action name="actionError">
+    <property name="checkable">
+     <bool>true</bool>
+    </property>
+    <property name="text">
+     <string>Error</string>
+    </property>
+   </action>
+   <action name="actionInfo">
+    <property name="checkable">
+     <bool>true</bool>
+    </property>
+    <property name="text">
+     <string>Info</string>
+    </property>
+   </action>
+   <action name="actionDebug">
+    <property name="checkable">
+     <bool>true</bool>
+    </property>
+    <property name="text">
+     <string>Debug</string>
+    </property>
+   </action>
+   <action name="actionTrace">
+    <property name="checkable">
+     <bool>true</bool>
+    </property>
+    <property name="text">
+     <string>Trace</string>
+    </property>
+   </action>
+  </actiongroup>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <resources>
@@ -563,4 +624,7 @@
    </hints>
   </connection>
  </connections>
+ <slots>
+  <slot>on_connectClicked()</slot>
+ </slots>
 </ui>

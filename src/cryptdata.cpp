@@ -45,6 +45,21 @@ static CryptProtectDataFunc pCryptProtectData;
 static CryptUnprotectDataFunc pCryptUnprotectData;
 static int lib_init = 0;
 
+/*
+ * GetProcAddress() returns a FARPROC.
+ * 
+ * GCC 8 adds -Wcast-function-type, enabled by default with -Wextra,
+ * which emits a warning when casting from FARPROC to more specific
+ * function pointers such as CryptProtectDataFunc/CryptUnprotectDataFunc.
+ * We need this hack to get rid of the warning.
+ */
+template<typename TargetType>
+static TargetType Cast_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
+{
+    FARPROC p = GetProcAddress(hModule, lpProcName);
+    return reinterpret_cast<TargetType>(reinterpret_cast<void *>(p));
+}
+
 static void __attribute__((constructor)) init(void)
 {
     static HMODULE lib;
@@ -52,8 +67,8 @@ static void __attribute__((constructor)) init(void)
     if (lib == NULL)
         return;
 
-    pCryptProtectData = (CryptProtectDataFunc)GetProcAddress(lib, "CryptProtectData");
-    pCryptUnprotectData = (CryptUnprotectDataFunc)GetProcAddress(lib, "CryptUnprotectData");
+    pCryptProtectData = Cast_GetProcAddress<CryptProtectDataFunc>(lib, "CryptProtectData");
+    pCryptUnprotectData = Cast_GetProcAddress<CryptUnprotectDataFunc>(lib, "CryptUnprotectData");
     if (pCryptProtectData == NULL || pCryptUnprotectData == NULL) {
         FreeLibrary(lib);
         return;
@@ -65,7 +80,7 @@ QByteArray CryptData::encode(QString& txt, QString password)
 {
 
     if (lib_init == 0) {
-        return password.toUtf8();
+        return {};
     }
 
     DATA_BLOB DataIn;
@@ -100,9 +115,12 @@ bool CryptData::decode(QString& txt, QByteArray _enc, QString& res)
 {
     res.clear();
 
-    if (lib_init == 0 || _enc.startsWith("xxxx") == false) {
+    if (_enc.startsWith("xxxx") == false) {
         res = QString::fromUtf8(_enc);
         return true;
+    }
+    if (lib_init == 0) {
+        return false;
     }
 
     DATA_BLOB DataIn;

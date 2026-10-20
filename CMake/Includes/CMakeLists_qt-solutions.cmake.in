@@ -12,7 +12,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 5.12 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 6.0 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 add_library(${PROJECT_NAME} STATIC
     qtsingleapplication/src/qtsingleapplication.cpp
@@ -20,15 +20,20 @@ add_library(${PROJECT_NAME} STATIC
     qtsingleapplication/src/qtlocalpeer.cpp
 )
 
+# do not warn on deprecated functions
+target_compile_options(${PROJECT_NAME}
+    PRIVATE -Wno-deprecated-declarations
+)
+
 target_compile_definitions(${PROJECT_NAME}
     PRIVATE -DUNICODE
 )
 
 target_link_libraries(${PROJECT_NAME}
-    Qt5::Core
-    Qt5::Gui
-    Qt5::Widgets
-    Qt5::Network
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Network
 )
 
 install(TARGETS ${PROJECT_NAME}

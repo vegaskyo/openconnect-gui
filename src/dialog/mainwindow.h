@@ -20,6 +20,7 @@
 #pragma once
 
 #include "common.h"
+#include "OcSettings.h"
 
 #include <QCoreApplication>
 #include <QFutureWatcher>
@@ -28,6 +29,8 @@
 #include <QMutex>
 #include <QSystemTrayIcon>
 #include <QTimer>
+#include <QNetworkReply>
+#include <QProgressDialog>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -57,7 +60,7 @@ enum status_t {
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = 0, const QString profileName = {});
+    explicit MainWindow(QWidget* parent = 0, bool useTray = false, const QString profileName = {});
     ~MainWindow();
 
     void updateStats(const struct oc_stats* stats, QString dtls);
@@ -70,6 +73,8 @@ public:
         QString& ip6,
         QString& cstp_cipher,
         QString& dtls_cipher);
+
+    int get_log_level();
 
 public slots:
     void iconActivated(QSystemTrayIcon::ActivationReason reason);
@@ -86,13 +91,15 @@ public slots:
     void closeEvent(QCloseEvent* event) override;
 
     void on_actionAbout_triggered();
-    void on_actionAboutQt_triggered();
+    void on_actionCheckForUpdates_triggered();
 
     void on_actionNewProfile_triggered();
     void on_actionNewProfileAdvanced_triggered();
     void on_actionEditSelectedProfile_triggered();
     void on_actionRemoveSelectedProfile_triggered();
 
+    void on_actionLicense_triggered();
+    void on_actionReport_an_issue_triggered();
     void on_actionWebSite_triggered();
 
 signals:
@@ -100,11 +107,17 @@ signals:
     void vpn_status_changed_sig(int);
     void timeout(void);
     void readyToShutdown();
+    void version_download_completed_sig();
 
 private slots:
     void createLogDialog();
+    void tryCheckLatestVersion();
+    void checkForUpdatesDialog();
 
 private:
+    void gotLatestVersion(QNetworkReply *reply);
+    void checkLatestVersion() const;
+
     static QString normalize_byte_size(uint64_t bytes);
     void createTrayIcon();
 
@@ -126,9 +139,15 @@ private:
     QString cstp_cipher;
     QString dtls_cipher;
 
+    QString latest_version;
+    time_t last_check_time;
+    QProgressDialog *downloadProgress;
+
+    QNetworkAccessManager *manager;
+
     QStateMachine* m_appWindowStateMachine;
     QSystemTrayIcon* m_trayIcon;
-    QMenu* m_trayIconMenu;
+    QMenu* m_trayIconMenu = nullptr;
     QMenu* m_trayIconMenuConnections;
     QAction* m_disconnectAction;
     QAction* m_minimizeAction;

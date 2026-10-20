@@ -38,8 +38,8 @@ public:
     const QString& get_groupname() const;
     void set_groupname(const QString& groupname);
 
-    const QString& get_servername() const;
-    void set_servername(const QString& servername);
+    const QString& get_server_gateway() const;
+    void set_server_gateway(const QString& server_gateway);
 
     const QString& get_label() const;
     void set_label(const QString& label);
@@ -57,12 +57,12 @@ public:
     void clear_ca();
     void clear_password();
     void clear_groupname();
-    void clear_server_hash();
+    void clear_server_pin();
 
-    QString get_client_cert_hash();
+    QString get_client_cert_pin();
     int set_client_cert(const QString& filename);
 
-    QString get_ca_cert_hash();
+    QString get_ca_cert_pin();
     int set_ca_cert(const QString& filename);
 
     bool get_batch_mode() const;
@@ -86,15 +86,13 @@ public:
     int get_token_type();
     void set_token_type(const int type);
 
-    int get_protocol_id() const;
-    void set_protocol_id(const int id);
-
-    const char* get_protocol_name() const;
+    const QString&  get_protocol_name() const;
     void set_protocol_name(const QString name);
 
-    unsigned get_server_hash(QByteArray& hash) const;
-    void get_server_hash(QString& hash) const;
-    void set_server_hash(const unsigned algo, const QByteArray& hash);
+    bool server_pin_algo_is_legacy(void);
+    unsigned get_server_pin(QByteArray& hash) const;
+    void get_server_pin(QString& hash) const;
+    void set_server_pin(const unsigned algo, const QByteArray& hash);
 
     bool client_is_complete() const;
 
@@ -103,6 +101,15 @@ public:
     int set_client_key(const QString& filename);
 
     QString m_last_err;
+
+    const QString& get_interface_name() const;
+    void set_interface_name(const QString& interface_name);
+
+    const QString& get_vpnc_script_filename() const;
+    void set_vpnc_script_filename(const QString& vpnc_script_filename);
+
+    int get_log_level();
+    void set_log_level(const int log_level);
 
 private:
     bool m_batch_mode;
@@ -114,14 +121,16 @@ private:
     QString m_username;
     QString m_password;
     QString m_groupname;
-    QString m_servername;
+    QString m_server_gateway;
     QString m_token_string;
     QString m_label;
     int m_token_type;
-    int m_protocol_id;
     QString m_protocol_name;
-    QByteArray m_server_hash;
-    unsigned m_server_hash_algo;
+    QByteArray m_server_pin;
+    unsigned m_server_pin_algo;
     Cert m_ca_cert;
     KeyPair m_client;
+    QString m_interface_name;
+    QString m_vpnc_script_filename;
+    int m_log_level;
 };

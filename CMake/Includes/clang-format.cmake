@@ -13,5 +13,5 @@ if(CLANG_FORMAT)
         COMMAND ${CLANG_FORMAT} -i ${ALL_SOURCE_FILES}
     )
 else()
-    message(STATUS " -----> clang-format nout found...")
+    message(STATUS " -----> clang-format not found...")
 endif()

@@ -23,7 +23,7 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QMessageBox>
-#include <QSettings>
+#include <OcSettings.h>
 #include <QTimer>
 
 LogDialog::LogDialog(QWidget* parent)
@@ -114,13 +114,18 @@ void LogDialog::onItemSelectionChanged()
 
 void LogDialog::loadSettings()
 {
-    QSettings settings;
+    OcSettings settings;
     settings.beginGroup("LogWindow");
+    if (settings.contains("geometry")) {
+        restoreGeometry(settings.value("geometry").toByteArray());
+    }
+
+    //remove old settings if they exist
     if (settings.contains("size")) {
-        resize(settings.value("size").toSize());
+        settings.remove("size");
     }
     if (settings.contains("pos")) {
-        move(settings.value("pos").toPoint());
+        settings.remove("pos");
     }
     settings.endGroup();
 }
@@ -128,10 +133,9 @@ void LogDialog::loadSettings()
 void LogDialog::saveSettings()
 {
 
-    QSettings settings;
+    OcSettings settings;
     settings.beginGroup("LogWindow");
-    settings.setValue("size", size());
-    settings.setValue("pos", pos());
+    settings.setValue("geometry", saveGeometry());
     settings.endGroup();
 }
 

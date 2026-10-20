@@ -50,7 +50,7 @@ bool MyMsgBox::event(QEvent* ev)
         msgBox->setInformativeText(t2);
         msgBox->setStandardButtons(QMessageBox::Cancel | QMessageBox::Ok);
         msgBox->setDefaultButton(QMessageBox::Cancel);
-        msgBox->setButtonText(QMessageBox::Ok, oktxt);
+        msgBox->addButton(oktxt, QMessageBox::ApplyRole);
 
         if (msgBox->exec() == QMessageBox::Cancel) {
             res = false;

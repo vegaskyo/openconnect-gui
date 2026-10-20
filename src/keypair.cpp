@@ -55,7 +55,7 @@ static int load_pkcs12_file(QWidget* w,
     }
 
     gnutls_datum_t raw = { nullptr, 0 };
-    int ret = gnutls_load_file(File.toLatin1().data(), &raw);
+    int ret = gnutls_load_file(File.toUtf8().data(), &raw);
     if (ret < 0) {
         last_err = gnutls_strerror(ret);
         goto fail;
@@ -96,13 +96,13 @@ static int load_pkcs12_file(QWidget* w,
         goto fail;
     }
 
-    ret = gnutls_pkcs12_verify_mac(pkcs12, pass.toLatin1().data());
+    ret = gnutls_pkcs12_verify_mac(pkcs12, pass.toUtf8().data());
     if (ret < 0) {
         last_err = gnutls_strerror(ret);
         goto fail;
     }
 
-    ret = gnutls_pkcs12_simple_parse(pkcs12, pass.toLatin1().data(), &xkey, &xcert,
+    ret = gnutls_pkcs12_simple_parse(pkcs12, pass.toUtf8().data(), &xkey, &xcert,
         &xcert_size, nullptr, nullptr, nullptr, 0);
     if (ret < 0) {
         last_err = gnutls_strerror(ret);

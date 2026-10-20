@@ -128,10 +128,10 @@ int Cert::import_file(const QString& File)
     if (is_url(File)) {
         gnutls_x509_crt_init(&this->crt);
 
-        int ret = gnutls_x509_crt_import_pkcs11_url(this->crt, File.toLatin1().data(), 0);
+        int ret = gnutls_x509_crt_import_pkcs11_url(this->crt, File.toUtf8().data(), 0);
         if (ret < 0) {
             ret = gnutls_x509_crt_import_pkcs11_url(this->crt,
-                File.toLatin1().data(),
+                File.toUtf8().data(),
                 GNUTLS_PKCS11_OBJ_FLAG_LOGIN);
         }
 
@@ -145,7 +145,7 @@ int Cert::import_file(const QString& File)
 
     /* normal file */
     gnutls_datum_t contents = { nullptr, 0 };
-    int ret = gnutls_load_file(File.toLatin1().data(), &contents);
+    int ret = gnutls_load_file(File.toUtf8().data(), &contents);
     if (ret < 0) {
         this->last_err = gnutls_strerror(ret);
         return -1;
@@ -177,9 +177,13 @@ int Cert::tmpfile_export(QString& filename)
 
     tmpfile.resize(0);
     filename = TMP_CERT_PREFIX;
-    tmpfile.setFileTemplate(filename);
+    tmpfile.setFileTemplate(QDir::tempPath() + filename);
 
-    tmpfile.open();
+    bool opened = tmpfile.open();
+    if (!opened) {
+        return -1;
+    }
+
     ret = tmpfile.write(qa);
     tmpfile.close();
     if (ret == -1) {
@@ -190,7 +194,7 @@ int Cert::tmpfile_export(QString& filename)
     return 0;
 }
 
-QString Cert::sha1_hash()
+QString Cert::cert_pin()
 {
     if (imported == false) {
         return "";
@@ -198,7 +202,7 @@ QString Cert::sha1_hash()
 
     unsigned char id[32];
     size_t len = sizeof(id);
-    int ret = gnutls_x509_crt_get_key_id(this->crt, 0, id, &len);
+    int ret = gnutls_x509_crt_get_key_id(this->crt, GNUTLS_KEYID_USE_SHA256, id, &len);
     if (ret < 0) {
         this->last_err = gnutls_strerror(ret);
         return "";
@@ -206,8 +210,8 @@ QString Cert::sha1_hash()
 
     QByteArray array;
     array.append((const char*)id, len);
-    QByteArray hex = array.toHex();
-    QString s = QObject::tr("SHA1:") + hex;
+    QByteArray b64 = array.toBase64();
+    QString s = QObject::tr("pin-sha256:%1").arg(QString(b64));
     return s;
 }
 

@@ -23,8 +23,8 @@ extern "C" {
 #include <gnutls/crypto.h>
 }
 
-#define HASH GNUTLS_DIG_SHA1
-#define HASH_LEN 20
+#define HASH GNUTLS_DIG_SHA256
+#define HASH_LEN 32
 #define MAX_HASH_LEN 64
 
 static int store_cb(const char* db_name,
@@ -42,7 +42,7 @@ static int store_cb(const char* db_name,
     QByteArray ahash;
     ahash.append(output, HASH_LEN);
     const gtdb* tdb = reinterpret_cast<const gtdb*>(db_name);
-    tdb->ss->set_server_hash(HASH, ahash);
+    tdb->ss->set_server_pin(HASH, ahash);
 
     return 0;
 }
@@ -54,7 +54,7 @@ static int verify_cb(const char* db_name,
 {
     const gtdb* tdb = reinterpret_cast<const gtdb*>(db_name);
     QByteArray ahash;
-    unsigned algo = tdb->ss->get_server_hash(ahash);
+    unsigned algo = tdb->ss->get_server_pin(ahash);
     int len = gnutls_hash_get_len((gnutls_digest_algorithm_t)algo);
 
     char output[MAX_HASH_LEN];

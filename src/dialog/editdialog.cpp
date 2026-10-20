@@ -27,15 +27,6 @@
 #include <QListWidget>
 #include <QMessageBox>
 
-// FIXME: this include should to into <openconnect.h>
-#ifdef _WIN32
-#include <winsock2.h>
-#endif
-
-extern "C" {
-#include <openconnect.h>
-}
-
 #ifdef USE_SYSTEM_KEYS
 extern "C" {
 #include <gnutls/system-keys.h>
@@ -44,6 +35,7 @@ extern "C" {
 
 static int token_tab(int mode)
 {
+    // keep in sync with the indices of the QComboBox items in src/dialog/editdialog.ui
     switch (mode) {
     case OC_TOKEN_MODE_HOTP:
         return 0;
@@ -57,9 +49,38 @@ static int token_tab(int mode)
 }
 
 static int token_rtab[] = {
-    [0] = OC_TOKEN_MODE_HOTP,
-    [1] = OC_TOKEN_MODE_TOTP,
-    [2] = OC_TOKEN_MODE_STOKEN
+    // keep in sync with the indices of the QComboBox items in src/dialog/editdialog.ui
+    OC_TOKEN_MODE_HOTP,  // [0]
+    OC_TOKEN_MODE_TOTP,  // [1]
+    OC_TOKEN_MODE_STOKEN // [2]
+};
+
+static int loglevel_tab(int mode)
+{
+    // keep in sync with the indices of the QComboBox items in src/dialog/editdialog.ui
+    switch (mode) {
+    case -1: //application default
+        return 0;
+    case PRG_ERR:
+        return 1;
+    case PRG_INFO:
+        return 2;
+    case PRG_DEBUG:
+        return 3;
+    case PRG_TRACE:
+        return 4;
+    default:
+        return -1;
+    }
+}
+
+static int loglevel_rtab[] = {
+    // keep in sync with the indices of the QComboBox items in src/dialog/editdialog.ui
+    -1,        // [0]
+    PRG_ERR,   // [1]
+    PRG_INFO,  // [2]
+    PRG_DEBUG, // [3]
+    PRG_TRACE  // [4]
 };
 
 void EditDialog::load_win_certs()
@@ -120,6 +141,10 @@ EditDialog::EditDialog(QString server, QWidget* parent)
 {
     ui->setupUi(this);
 
+#ifdef _WIN32
+    ui->interfaceNameEdit->setMaxLength(OC_IFNAME_MAX_LENGTH);
+#endif
+
     VpnProtocolModel* model = new VpnProtocolModel(this);
     ui->protocolComboBox->setModel(model);
 
@@ -138,9 +163,9 @@ EditDialog::EditDialog(QString server, QWidget* parent)
     }
     ui->groupnameEdit->setText(ss->get_groupname());
     ui->usernameEdit->setText(ss->get_username());
-    ui->gatewayEdit->setText(ss->get_servername());
-    ui->userCertHash->setText(ss->get_client_cert_hash());
-    ui->caCertHash->setText(ss->get_ca_cert_hash());
+    ui->gatewayEdit->setText(ss->get_server_gateway());
+    ui->userCertHash->setText(ss->get_client_cert_pin());
+    ui->caCertHash->setText(ss->get_ca_cert_pin());
     ui->batchModeBox->setChecked(ss->get_batch_mode());
     ui->minimizeBox->setChecked(ss->get_minimize());
     ui->useProxyBox->setChecked(ss->get_proxy());
@@ -157,10 +182,17 @@ EditDialog::EditDialog(QString server, QWidget* parent)
         ui->tokenEdit->setText(ss->get_token_str());
     }
 
-    ui->protocolComboBox->setCurrentIndex(ss->get_protocol_id());
+    ui->protocolComboBox->setCurrentIndex(model->findIndex(ss->get_protocol_name()));
+    ui->interfaceNameEdit->setText(ss->get_interface_name());
+    ui->vpncScriptEdit->setText(ss->get_vpnc_script_filename());
+
+    type = loglevel_tab(ss->get_log_level());
+    if (type != -1) {
+        ui->loglevelBox->setCurrentIndex(type);
+    }
 
     QString hash;
-    ss->get_server_hash(hash);
+    ss->get_server_pin(hash);
     ui->serverCertHash->setText(hash);
 }
 
@@ -200,7 +232,7 @@ void EditDialog::on_buttonBox_accepted()
             mbox.exec();
             return;
         } else {
-            ui->caCertHash->setText(ss->get_ca_cert_hash());
+            ui->caCertHash->setText(ss->get_ca_cert_pin());
         }
     }
 
@@ -224,7 +256,7 @@ void EditDialog::on_buttonBox_accepted()
             mbox.exec();
             return;
         } else {
-            ui->userCertHash->setText(ss->get_client_cert_hash());
+            ui->userCertHash->setText(ss->get_client_cert_pin());
         }
     }
 
@@ -236,7 +268,7 @@ void EditDialog::on_buttonBox_accepted()
     }
     ss->set_label(ui->nameEdit->text());
     ss->set_username(ui->usernameEdit->text());
-    ss->set_servername(ui->gatewayEdit->text());
+    ss->set_server_gateway(ui->gatewayEdit->text());
     ss->set_batch_mode(ui->batchModeBox->isChecked());
     ss->set_minimize(ui->minimizeBox->isChecked());
     ss->set_proxy(ui->useProxyBox->isChecked());
@@ -253,10 +285,20 @@ void EditDialog::on_buttonBox_accepted()
         ss->set_token_type(-1);
     }
 
-    ss->set_protocol_id(ui->protocolComboBox->currentIndex());
-    ss->set_protocol_name(ui->protocolComboBox->currentData(Qt::UserRole + 1).toString());
+    ss->set_protocol_name(ui->protocolComboBox->currentData(ROLE_PROTOCOL_NAME).toString());
+    ss->set_interface_name(ui->interfaceNameEdit->text());
+    ss->set_vpnc_script_filename(ui->vpncScriptEdit->text());
 
-    ss->save();
+    type = ui->loglevelBox->currentIndex();
+    if (type == -1) {
+        type = 0; //first entry is "application default"
+    }
+    ss->set_log_level(loglevel_rtab[type]);
+
+    if (ss->save() != 0) {
+        QMessageBox::warning(this, qApp->applicationName(), ss->m_last_err);
+        return;
+    }
     this->accept();
 }
 
@@ -317,7 +359,8 @@ void EditDialog::on_caCertClear_clicked()
 
 void EditDialog::on_serverCertClear_clicked()
 {
-    ss->clear_server_hash();
+    ss->clear_server_pin();
+    ui->serverCertHash->clear();
 }
 
 void EditDialog::on_tokenClear_clicked()
@@ -385,4 +428,24 @@ void EditDialog::on_resetWinCertSelection_clicked()
 
     on_userCertClear_clicked();
     on_userKeyClear_clicked();
+}
+
+void EditDialog::on_vpncScriptButton_clicked()
+{
+#ifdef Q_OS_WIN32
+    QString filter = tr("Javascript Files (*.js)");
+#else
+    QString filter = nullptr;
+#endif
+
+    QString filename = QFileDialog::getOpenFileName(this,
+        tr("Select vpnc-script"),
+        ui->vpncScriptEdit->text(),
+        filter
+    );
+
+    if (! filename.isEmpty()) {
+        filename = QDir::toNativeSeparators(filename);
+        ui->vpncScriptEdit->setText(filename);
+    }
 }

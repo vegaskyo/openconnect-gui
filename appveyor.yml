@@ -4,19 +4,21 @@ pull_requests:
 branches:
   except:
   - gh-pages
-image: Visual Studio 2017
-clone_depth: 100
+image: Visual Studio 2022
+clone_depth: 200
 environment:
-  QT5: C:\Qt\5.12\mingw73_64
-  MINGW: C:\Qt\Tools\mingw730_64
+  QT6: C:\Qt\6.5.3\mingw_64
+  MINGW: C:\msys64\mingw64
   NSIS: C:\Program Files (x86)\NSIS
   matrix:
-#  - GENERATOR: '"MinGW Makefiles"'
-#    BUILD_TYPE: Debug
-#    TARGET: all
   - GENERATOR: '"MinGW Makefiles"'
-    BUILD_TYPE: Release
+    BUILD_DIR: build
+    BUILD_TYPE: Debug
     TARGET: package
+#    TARGET: all
+#  - GENERATOR: '"MinGW Makefiles"'
+#    BUILD_TYPE: Release
+#    TARGET: package
 cache: .\build -> appveyor.yml
 build_script:
 - cmd: >-
@@ -24,38 +26,18 @@ build_script:
 
     set PATH=%PATH:C:\Program Files\Git\usr\bin;=%
 
-    set PATH=%MINGW%\bin;%QT5%\bin;%PATH%
+    set PATH=%MINGW%\bin;%QT6%\bin;%PATH%
 
     set PATH="%NSIS%";%PATH%
 
-    if not exist build md build
+    c:\msys64\msys2_shell.cmd -defterm -no-start -mingw64 -where . -c "./contrib/build_deps_mingw@msys2.sh"
 
-    cd .\build
-
-    cmake -G %GENERATOR% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ..
-
-    cmake --build . --config %BUILD_TYPE% --target %TARGET%
-
-    move /Y *.exe ..
-
-    move /Y *.exe.sha512 ..
+    c:\msys64\msys2_shell.cmd -defterm -no-start -mingw64 -where . -c "./contrib/build_mingw@msys2.sh"
 
 test: off
 artifacts:
-- path: openconnect-gui*.exe
+- path: build/openconnect-gui*.exe
   name: 'Installer'
-- path: openconnect-gui*.exe.sha512
+- path: build/openconnect-gui*.exe.sha512
   name: 'Installer - sha512 hash'
-deploy:
-- provider: GitHub
-  tag: $(APPVEYOR_REPO_TAG_NAME)
-  release: $(APPVEYOR_REPO_TAG_NAME)
-  description: TBD...
-  auth_token:
-    secure: x7ZSG2iQyNioIlyguchg7/Tzl5NzY521hr8Op0H4EQt/kPIndb2KHe/OlGiX+GSK
-  artifact: /openconnect-gui-.*\.exe.*/
-  draft: true
-  force_update: true
-  on:
-    appveyor_repo_tag: true
 

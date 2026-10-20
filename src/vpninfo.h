@@ -20,14 +20,8 @@
 #pragma once
 
 #include <QString>
-#ifdef _WIN32
-#include <winsock2.h>
-#else
+#include <QUrl>
 #include "common.h"
-#endif
-#if defined(__linux__) || defined(__FreeBSD__)
-#define SOCKET int
-#endif
 
 class MainWindow;
 class StoredServer;
@@ -37,17 +31,19 @@ public:
     VpnInfo(QString name, StoredServer* ss, MainWindow* m);
     ~VpnInfo();
 
-    void parse_url(const char* url);
+    void setUrl(const QUrl& url);
     int connect();
-    int dtls_connect();
     void mainloop();
     void get_info(QString& dns, QString& ip, QString& ip6);
     void get_cipher_info(QString& cstp, QString& dtls);
     SOCKET get_cmd_fd() const;
     void reset_vpn();
     bool get_minimize() const;
+    bool is_username_form_option(struct oc_auth_form* form, struct oc_form_opt* opt);
+    bool is_password_form_option(struct oc_auth_form* form, struct oc_form_opt* opt);
 
     QString last_err;
+    QUrl mUrl;
     MainWindow* m;
     StoredServer* ss;
     struct openconnect_info* vpninfo;
@@ -57,6 +53,7 @@ public:
     unsigned int form_pass_attempt;
 
     void logVpncScriptOutput();
+    QByteArray generateUniqueInterfaceName();
 
 private:
     SOCKET cmd_fd;

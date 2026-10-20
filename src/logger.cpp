@@ -26,8 +26,8 @@ QVector<Logger::Message> Logger::getMessages(int lastKnownId) const
 {
     QReadLocker lock(&m_lock);
 
-    int diff{ m_messageCounter - lastKnownId };
-    int size{ m_messages.size() };
+    qsizetype diff{ m_messageCounter - lastKnownId };
+    qsizetype size{ m_messages.size() };
 
     if (lastKnownId == -1 || diff >= size) {
         return m_messages;

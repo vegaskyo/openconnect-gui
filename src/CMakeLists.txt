@@ -1,11 +1,12 @@
+set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set_property(SOURCE ${PROJECT_NAME}.cpp PROPERTY SKIP_AUTOGEN ON)
 set_property(SOURCE timestamp.cpp PROPERTY SKIP_AUTOGEN ON)
 
 set(${PROJECT_NAME}_SRCS
-    ${PROJECT_NAME}.cpp
-    ${PROJECT_NAME}.qrc
+    openconnect-gui.qrc
     cert.cpp
+    common.h
     config.h.in
     cryptdata.cpp
     dialog/MyCertMsgBox.cpp
@@ -33,6 +34,7 @@ set(${PROJECT_NAME}_SRCS
     logger.cpp
 
     FileLogger.cpp
+    OcSettings.h
 )
 
 set_source_files_properties(
@@ -76,18 +78,17 @@ add_executable(${PROJECT_NAME}
     ${${PROJECT_NAME}_SRCS}
     ${${PROJECT_NAME}_RESOURCES}
 )
+
 if(MINGW)
     add_definitions(-DSPDLOG_WCHAR_FILENAMES)
 
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/external/vpnc-script.js $<TARGET_FILE_DIR:${PROJECT_NAME}>
-        COMMENT "Deploying vpnc script..."
+        COMMENT "Deploying vpnc-script..."
         VERBATIM
     )
 
     add_dependencies(${PROJECT_NAME}
-        openconnect-devel-${openconnect-TAG}
-        openconnect-${openconnect-TAG}
         vpnc-scripts-${vpnc-scripts-TAG}
     )
 
@@ -98,7 +99,26 @@ if(MINGW)
     target_link_libraries (${PROJECT_NAME}
         # system libraries
         wsock32
+    )
+endif()
 
+#code signing
+if(SIGN_EXE STREQUAL "true")
+    add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND sh -c "${CMAKE_SOURCE_DIR}/contrib/sign.sh \"$<TARGET_FILE:${PROJECT_NAME}>\""
+        COMMENT "Signing executable ..."
+        VERBATIM
+    )
+endif()
+
+if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
+    add_dependencies(${PROJECT_NAME}
+        openconnect-devel-${openconnect-TAG}
+        openconnect-${openconnect-TAG}
+    )
+
+    target_link_libraries (${PROJECT_NAME}
         # 3rd party dependencies
         openconnect::gmp
         openconnect::gnutls
@@ -108,6 +128,11 @@ if(MINGW)
         openconnect::p11-kit
         openconnect::stoken
         openconnect::xml2
+    )
+else()
+    target_link_libraries (${PROJECT_NAME}
+        ${OPENCONNECT_LIBRARIES}
+        ${GNUTLS_LIBRARY}
     )
 endif()
 
@@ -124,7 +149,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME ${PRODUCT_NAME_SHORT}
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}"
         MACOSX_BUNDLE_COPYRIGHT "${PRODUCT_NAME_COPYRIGHT_SHORT}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER io.github.openconnect.openconnect-gui
+        MACOSX_BUNDLE_GUI_IDENTIFIER net.openconnect-vpn.gui
         MACOSX_BUNDLE_ICON_FILE mono_lock.icns
         MACOSX_BUNDLE_INFO_STRING ${PRODUCT_NAME_LONG}
     )
@@ -136,18 +161,15 @@ target_link_libraries (${PROJECT_NAME}
     spdlog::spdlog
     qt-solutions::qtsingleapplication
 
-    Qt5::Core
-    Qt5::Gui
-    Qt5::Widgets
-    Qt5::Network
-    #??? Qt5::QMacStylePlugin
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Network
+    Qt6::StateMachine
 )
 
 if(UNIX)
     target_link_libraries(${PROJECT_NAME}
-        ${OPENCONNECT_LIBRARIES}
-        ${GNUTLS_LIBRARY}
-
         Threads::Threads
     )
     if(APPLE)
@@ -165,20 +187,24 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 # fixup the bundle
-get_target_property(QT_LIBRARY_DIR Qt5::Core LOCATION)
+get_target_property(QT_LIBRARY_DIR Qt6::Core LOCATION)
 get_filename_component(QT_LIBRARY_DIR ${QT_LIBRARY_DIR} PATH)
-get_filename_component(QT_LIBRARY_DIR "${QT_LIBRARY_DIR}/.." ABSOLUTE)
 list(APPEND libSearchDirs ${QT_LIBRARY_DIR})
 
 if(MINGW)
     set(APPS "\${CMAKE_INSTALL_PREFIX}/${PROJECT_NAME}.exe")
-    #set(APPS "\${CMAKE_INSTALL_PREFIX}/./${PROJECT_NAME}.exe")
-    list(APPEND libSearchDirs ${CMAKE_BINARY_DIR}/external/lib)
+    list(APPEND libSearchDirs ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
     # Qt Platform Plugin
     install(FILES
         ${_qwindows_dll}
         DESTINATION plugins/platforms
+        COMPONENT App
+    )
+    # Qt schannel plugin
+    install(FILES
+        ${_schannel_dll}
+        DESTINATION plugins/tls
         COMPONENT App
     )
     install(FILES
@@ -188,7 +214,7 @@ if(MINGW)
     )
 
     set(additionalLib ${_qwindows_dll})
-    if(NOT Qt5Core_VERSION STRLESS "5.10")
+    if(Qt6Core_VERSION VERSION_GREATER_EQUAL "6.0")
         install(FILES
             ${_qwinstyle_dylib}
             DESTINATION plugins/styles
@@ -206,7 +232,7 @@ elseif(APPLE)
         COMPONENT App
     )
     set(additionalLib \${CMAKE_INSTALL_PREFIX}/${PROJECT_NAME}.app/Contents/PlugIns/platforms/libqcocoa.dylib)
-    if(NOT Qt5Core_VERSION STRLESS "5.10")
+    if(Qt6Core_VERSION VERSION_GREATER_EQUAL "6.0")
         install(FILES
             ${_qmacstyle_dylib}
             DESTINATION ${PROJECT_NAME}.app/Contents/PlugIns/styles
@@ -224,6 +250,15 @@ elseif(APPLE)
     )
 else()
     message(STATUS "Nothing to bundle...")
+endif()
+
+if(MINGW)
+    #wintun
+    install(FILES
+        ${CMAKE_BINARY_DIR}/bin/wintun.dll
+        DESTINATION .
+        COMPONENT App
+    )
 endif()
 
 install(CODE "
