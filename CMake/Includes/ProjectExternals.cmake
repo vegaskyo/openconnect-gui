@@ -1,3 +1,7 @@
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
 if(MINGW)
     if(NOT CMAKE_CROSSCOMPILING)
         file(STRINGS "${CMAKE_SOURCE_DIR}/contrib/openconnect-version.txt" OPENCONNECT_DEFAULT_TAG LIMIT_COUNT 1)

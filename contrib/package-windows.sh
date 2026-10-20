@@ -43,6 +43,18 @@ printf '%s\n' "$key" > "$marker"
 
 build="$root/build-MINGW64/openconnect-gui"
 out="$root/build-output/windows"
+package_key=$(printf '%s\n' "$(git rev-parse HEAD)" "$key" "$OC_TAG" | sha512sum | awk '{print $1}')
+package_manifest="$out/.package-cache"
+if [[ ${REBUILD_CORE:-0} != 1 && -z $(git status --porcelain) && -f $package_manifest ]]; then
+    mapfile -t cached_package < "$package_manifest"
+    cached_stem=${cached_package[1]:-}
+    if [[ ${cached_package[0]:-} == "$package_key" && $cached_stem == openconnect-gui-*-win64 ]] &&
+        valid_archive "$out/$cached_stem.exe" && valid_archive "$out/$cached_stem-portable.zip"; then
+        echo 'Packages: verified clean-commit cache hit; skipping compilation and packaging.'
+        printf 'Packages ready: %s\n' "$(cygpath -w "$out")"
+        exit 0
+    fi
+fi
 launcher=()
 if command -v ccache >/dev/null; then
     export CCACHE_DIR=${CCACHE_DIR:-$root/build-cache/ccache}
@@ -67,5 +79,8 @@ done
     printf 'GUI: %s\nOpenConnect: %s\nRequested tag: %s\n' "$gui_version" "$core_version" "$OC_TAG"
     pacman -Q | LC_ALL=C sort
 } > "$out/build-info.txt"
+if [[ -z $(git status --porcelain) ]]; then
+    printf '%s\n%s\n' "$package_key" "$stem" > "$package_manifest"
+fi
 command -v ccache >/dev/null && ccache --show-stats || true
 printf '\nPackages ready: %s\n' "$(cygpath -w "$out")"

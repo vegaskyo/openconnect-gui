@@ -79,6 +79,9 @@ If MSYS2 is already installed, use it without configuring commands by hand:
 
 Local mode automatically installs missing packages into that MSYS2 installation,
 uses incremental builds and creates both packages in `build-output/windows`.
+For an unchanged clean commit and dependency environment, it verifies and reuses
+the existing EXE/ZIP without compiling or repackaging. Uncommitted changes always
+take the build path so local edits are not hidden by the package cache.
 It never installs MSYS2 itself. For an installation outside `C:\msys64`, pass
 `-Msys2Root C:\path\to\msys64`. `-Jobs 4` is the default parallelism limit;
 `-Local -RebuildCore` forces rebuilding the core instead of using its ZIP cache.

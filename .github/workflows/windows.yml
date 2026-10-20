@@ -68,7 +68,9 @@ jobs:
         with:
           path: build-cache/ccache
           key: windows-compiler-v1-${{ steps.environment.outputs.key }}-${{ github.sha }}
-          restore-keys: windows-compiler-v1-${{ steps.environment.outputs.key }}-
+          restore-keys: |
+            windows-compiler-v1-${{ steps.environment.outputs.key }}-
+            windows-compiler-v1-
       - name: Build installer and portable ZIP
         run: bash contrib/package-windows.sh
       - name: Validate packages

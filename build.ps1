@@ -13,6 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 Set-Location -LiteralPath $root
+if ($RunId -and $OpenConnectVersion) { throw 'Use either -RunId or -OpenConnectVersion, not both.' }
 
 if ($Local) {
     $bash = Join-Path $Msys2Root 'usr\bin\bash.exe'
@@ -81,7 +82,6 @@ if (-not $Ref) {
         $Ref = Invoke-GitHub -Arguments @('repo','view',$Repository,'--json','defaultBranchRef','--jq','.defaultBranchRef.name')
     }
 }
-$pin = (Get-Content -LiteralPath (Join-Path $root 'contrib\openconnect-version.txt') -Raw).Trim()
 if (-not $RunId) {
     $encodedRef = [uri]::EscapeDataString($Ref)
     $commit = Invoke-GitHub -Arguments @('api',"repos/$Repository/commits/$encodedRef",'--jq','.sha')
@@ -89,7 +89,7 @@ if (-not $RunId) {
     if (& git status --porcelain) { Write-Warning 'Local uncommitted edits are not part of a remote build. Use -Local to build them.' }
     # A push already builds this exact commit. Reuse its successful artifact, or wait
     # for its existing run, instead of compiling the same source again.
-    if (-not $OpenConnectVersion -or $OpenConnectVersion -eq $pin) {
+    if (-not $OpenConnectVersion) {
         $runs = Invoke-GitHub -Arguments @('run','list','--repo',$Repository,'--workflow','windows.yml','--branch',$Ref,'--limit','30','--json','databaseId,headSha,event,status,conclusion') | ConvertFrom-Json
         $existing = $runs | Where-Object { $_.headSha -eq $commit -and $_.event -eq 'push' } | Select-Object -First 1
         if ($existing) {
