@@ -45,6 +45,7 @@ way openconnect gui works is
 - macOS 10.12 and newer
 
 ## Development info
+- [One-command Windows builds without a local toolchain](docs/build-windows.md)
 - [Compilation](docs/dev.md)
 - [Development with QtCreator](docs/dev_QtCreator.md)
 

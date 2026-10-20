@@ -33,7 +33,7 @@ echo "Starting under $MSYSTEM build environment ($ROOT_DIR)..."
 if [ "$1" == "--head" ]; then
     export OC_TAG=master
 else
-    export OC_TAG=v9.21
+    export OC_TAG="${OC_TAG:-$(tr -d '\r\n' < "${ROOT_DIR}/contrib/openconnect-version.txt")}"
 fi
 
 echo "======================================================================="
@@ -79,7 +79,7 @@ cmake -G "MinGW Makefiles" \
 echo "======================================================================="
 echo " Compiling..."
 echo "======================================================================="
-CORES=$(getconf _NPROCESSORS_ONLN)
+CORES=${BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN)}
 cmake --build . --config "$BUILD_TYPE" -- -j${CORES}
 
 echo "======================================================================="
