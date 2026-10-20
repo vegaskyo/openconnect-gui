@@ -111,9 +111,9 @@ if (-not $RunId) {
         if (-not $RunId) { throw 'GitHub did not register the build request within 90 seconds.' }
     }
 }
-Write-Host "Build run: https://github.com/$Repository/actions/runs/$RunId"
-$runState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
-if ($runState.status -eq 'completed') {
+function Invoke-BillingFallback {
+    param($State)
+    $runState = $State
     # A billing-locked account cannot start a runner. Reuse a complete local SDK
     # when it is already present, without installing missing packages implicitly.
     $blockedByBilling = $false
@@ -136,11 +136,17 @@ if ($runState.status -eq 'completed') {
             Write-Warning 'GitHub blocked its runner due to account billing. Using the existing local toolchain; no packages will be installed.'
             $localArguments = @{Local=$true; UseInstalledToolsOnly=$true; Msys2Root=$Msys2Root; Jobs=$Jobs}
             if ($OpenConnectVersion) { $localArguments.OpenConnectVersion = $OpenConnectVersion }
-            & $PSCommandPath @localArguments
-            return
+            & $PSCommandPath @localArguments | Out-Host
+            return $true
         }
         throw 'GitHub blocked this build due to account billing. Resolve https://github.com/settings/billing before using cloud builds. No local toolchain was installed.'
     }
+    return $false
+}
+Write-Host "Build run: https://github.com/$Repository/actions/runs/$RunId"
+$runState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
+if ($runState.status -eq 'completed') {
+    if (Invoke-BillingFallback -State $runState) { return }
     $artifactState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId/artifacts") | ConvertFrom-Json
     $available = $artifactState.artifacts | Where-Object { $_.name -eq 'windows-package' -and -not $_.expired }
     if ($runState.conclusion -ne 'success' -or -not $available) {
@@ -155,7 +161,11 @@ if ($runState.status -eq 'completed') {
     }
 }
 & $gh run watch "$RunId" --repo $Repository --exit-status
-if ($LASTEXITCODE -ne 0) { throw 'Remote build failed. Open the run URL above for its logs.' }
+if ($LASTEXITCODE -ne 0) {
+    $finalState = Invoke-GitHub -Arguments @('api',"repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
+    if (Invoke-BillingFallback -State $finalState) { return }
+    throw 'Remote build failed. Open the run URL above for its logs.'
+}
 $destination = Join-Path $root "build-output\windows-$RunId"
 if (Test-Path -LiteralPath $destination) {
     $destination += '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
