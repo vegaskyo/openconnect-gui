@@ -15,6 +15,7 @@ if [[ ${OCG_PACKAGES_READY:-0} != 1 ]]; then
         cat build-output/logs/packages.log >&2; exit 1;
     }
 fi
+export OCG_PACKAGES_READY=1
 
 runtime="external/openconnect-${OC_TAG}_MINGW64.zip"
 devel="external/openconnect-devel-${OC_TAG}_MINGW64.zip"
@@ -43,6 +44,14 @@ printf '%s\n' "$key" > "$marker"
 
 build="$root/build-MINGW64/openconnect-gui"
 out="$root/build-output/windows"
+# Git for Windows and MSYS2 Git may read different global configurations.
+# Normalize CRLF for status/version checks in this process only. Apply this
+# after the core's Autotools checkout so its shell scripts retain LF endings.
+git_config_count=${GIT_CONFIG_COUNT:-0}
+[[ $git_config_count =~ ^[0-9]+$ ]] || { echo 'Invalid Git environment configuration' >&2; exit 1; }
+export "GIT_CONFIG_KEY_${git_config_count}=core.autocrlf"
+export "GIT_CONFIG_VALUE_${git_config_count}=true"
+export GIT_CONFIG_COUNT=$((git_config_count + 1))
 package_key=$(printf '%s\n' "$(git rev-parse HEAD)" "$key" "$OC_TAG" | sha512sum | awk '{print $1}')
 package_manifest="$out/.package-cache"
 if [[ ${REBUILD_CORE:-0} != 1 && -z $(git status --porcelain) && -f $package_manifest ]]; then
